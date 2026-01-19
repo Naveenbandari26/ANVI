@@ -1,0 +1,154 @@
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
+import Constants from 'expo-constants';
+
+// Extract IP address from Expo dev server URL (e.g., "192.168.1.42:8081" -> "192.168.1.42")
+const getExpoDevServerIP = (): string | null => {
+  try {
+    // Try to get the host from Expo Constants
+    // hostUri is available when running in Expo Go or development build
+    const hostUri = Constants.expoConfig?.hostUri;
+    if (hostUri) {
+      // hostUri format: "192.168.1.42:8081" or "192.168.1.42"
+      const ip = hostUri.split(':')[0];
+      // Validate it's an IP address (not localhost)
+      if (ip && ip !== 'localhost' && ip !== '127.0.0.1' && !ip.includes('10.0.2.2')) {
+        return ip;
+      }
+    }
+  } catch (error) {
+    // Ignore errors
+  }
+  return null;
+};
+
+// Determine API URL based on platform and environment
+const getApiBaseUrl = () => {
+  // For web platform, ALWAYS use localhost:5000 (ignore env vars)
+  if (Platform.OS === 'web') {
+    return 'http://localhost:5000';
+  }
+  
+  // Helper: Check if URL looks like a physical device IP (not localhost/emulator IP)
+  const isPhysicalDeviceUrl = (url: string): boolean => {
+    return !url.includes('localhost') && 
+           !url.includes('127.0.0.1') && 
+           !url.includes('10.0.2.2') &&
+           (url.includes('http://') || url.includes('https://'));
+  };
+  
+  // Helper: Normalize URL to use port 5000
+  const normalizePort = (url: string): string => {
+    if (url.includes(':3000')) {
+      console.warn('⚠️  EXPO_PUBLIC_API_URL uses port 3000. Converting to port 5000.');
+      return url.replace(':3000', ':5000');
+    }
+    if (!url.includes(':5000') && !url.includes(':3000')) {
+      // No port specified, add :5000
+      return url.endsWith('/') ? `${url.slice(0, -1)}:5000` : `${url}:5000`;
+    }
+    return url;
+  };
+  
+  // Try to auto-detect Expo dev server IP (for physical devices on same WiFi)
+  const expoIP = getExpoDevServerIP();
+  
+  // For iOS
+  if (Platform.OS === 'ios') {
+    // Priority 1: Use auto-detected Expo dev server IP (most reliable - matches Metro bundler)
+    if (expoIP) {
+      console.log(`📱 Auto-detected Expo dev server IP: ${expoIP} (using this for API calls)`);
+      return `http://${expoIP}:5000`;
+    }
+    // Priority 2: Use env var if set and looks like physical device IP
+    const envUrl = process.env.EXPO_PUBLIC_API_URL;
+    if (envUrl && isPhysicalDeviceUrl(envUrl)) {
+      console.log(`📱 Using EXPO_PUBLIC_API_URL: ${envUrl}`);
+      return normalizePort(envUrl);
+    }
+    // Priority 3: iOS simulator uses localhost:5000
+    return 'http://localhost:5000';
+  }
+  
+  // For Android
+  if (Platform.OS === 'android') {
+    // Priority 1: Use auto-detected Expo dev server IP (most reliable - matches Metro bundler)
+    if (expoIP) {
+      console.log(`📱 Auto-detected Expo dev server IP: ${expoIP} (using this for API calls)`);
+      return `http://${expoIP}:5000`;
+    }
+    // Priority 2: Use env var if set and looks like physical device IP
+    const envUrl = process.env.EXPO_PUBLIC_API_URL;
+    if (envUrl && isPhysicalDeviceUrl(envUrl)) {
+      console.log(`📱 Using EXPO_PUBLIC_API_URL: ${envUrl}`);
+      return normalizePort(envUrl);
+    }
+    // Priority 3: Android emulator uses special IP to access host machine
+    return 'http://10.0.2.2:5000';
+  }
+  
+  // Fallback (shouldn't reach here)
+  return 'http://localhost:5000';
+};
+
+const API_BASE_URL = getApiBaseUrl();
+
+// Debug logging
+console.log('📡 API Configuration:');
+console.log('   Platform:', Platform.OS);
+console.log('   API Base URL:', API_BASE_URL);
+console.log('   Full API URL:', `${API_BASE_URL}/api/v1`);
+console.log('   EXPO_PUBLIC_API_URL:', process.env.EXPO_PUBLIC_API_URL || 'not set');
+console.log('   Expo Dev Server IP:', getExpoDevServerIP() || 'not detected');
+
+export const api = axios.create({
+  baseURL: `${API_BASE_URL}/api/v1`,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  timeout: 10000, // 10 second timeout
+});
+
+// Add token to requests
+api.interceptors.request.use(
+  async (config) => {
+    const token = await AsyncStorage.getItem('authToken');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    // Log request URL for debugging
+    console.log(`🌐 API Request: ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`);
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+// Handle auth errors
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    // Enhanced error logging
+    if (error.code === 'ECONNREFUSED' || error.message === 'Network Error') {
+      console.error('❌ Network Error - Cannot connect to backend');
+      console.error(`   Attempted URL: ${error.config?.baseURL}${error.config?.url}`);
+      console.error(`   Base URL: ${API_BASE_URL}`);
+      console.error('💡 Solutions:');
+      console.error('   1. Ensure backend server is running (npm run dev in server/)');
+      console.error('   2. If using physical device, set EXPO_PUBLIC_API_URL to your computer IP');
+      console.error('   3. Check if phone and computer are on same WiFi network');
+    }
+    
+    if (error.response?.status === 401) {
+      // Clear token and redirect to login
+      await AsyncStorage.removeItem('authToken');
+    }
+    return Promise.reject(error);
+  }
+);
+
+export default api;
+
+

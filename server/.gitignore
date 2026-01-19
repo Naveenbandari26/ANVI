@@ -36,3 +36,6 @@ coverage/
 # Misc
 *.tsbuildinfo
 
+# Vosk models (large files)
+models/
+uploads/

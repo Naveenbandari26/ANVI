@@ -1,4 +1,5 @@
 import express, { Application, Request, Response, NextFunction } from 'express';
+import { createServer } from 'http';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -7,13 +8,18 @@ import dotenv from 'dotenv';
 import { errorHandler } from './middleware/errorHandler';
 import { notFoundHandler } from './middleware/notFoundHandler';
 import { connectDatabase } from './config/database';
+import { initializeSocket } from './config/socket';
+import { initializeSchedules } from './services/schedule.service';
+import { initializeVoskModel } from './services/vosk.service';
+import { initializeTTSService } from './services/tts.service';
 import apiRoutes from './routes';
 
 // Load environment variables
 dotenv.config();
 
 const app: Application = express();
-const PORT = process.env.PORT || 3000;
+const httpServer = createServer(app);
+const PORT = process.env.PORT || 5000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
 // Security middleware
@@ -41,6 +47,14 @@ if (NODE_ENV === 'development') {
   app.use(morgan('combined'));
 }
 
+// Debug middleware to log all incoming requests
+if (NODE_ENV === 'development') {
+  app.use((req, res, next) => {
+    console.log(`📥 ${req.method} ${req.originalUrl} (path: ${req.path})`);
+    next();
+  });
+}
+
 // Health check endpoint
 app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({
@@ -59,17 +73,38 @@ app.use(notFoundHandler);
 // Error handler (must be last)
 app.use(errorHandler);
 
+// Initialize Socket.io
+initializeSocket(httpServer);
+
 // Start server with database connection
 const startServer = async (): Promise<void> => {
   try {
     // Connect to MongoDB
     await connectDatabase();
 
-    // Start Express server
-    app.listen(PORT, () => {
+    // Initialize Vosk HTTP API connection (non-blocking)
+    initializeVoskModel().catch((error) => {
+      console.warn('⚠️  Vosk HTTP API connection failed:', error.message);
+      console.warn('📝 Make sure Vosk Docker container is running');
+      console.warn('   Run: docker-compose -f docker-compose.vosk.yml up -d');
+    });
+
+    // Initialize TTS service connection (non-blocking)
+    initializeTTSService().catch((error) => {
+      console.warn('⚠️  Telugu TTS service connection failed:', error.message);
+      console.warn('📝 Make sure Python TTS service is running');
+      console.warn('   Run: cd server/tts-service && python app.py');
+    });
+
+    // Initialize scheduled calls
+    await initializeSchedules();
+
+    // Start HTTP server with Socket.io
+    httpServer.listen(PORT, () => {
       console.log(`🚀 Server is running on port ${PORT}`);
       console.log(`📝 Environment: ${NODE_ENV}`);
       console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+      console.log(`🔌 WebSocket server initialized`);
     });
   } catch (error) {
     console.error('❌ Failed to start server:', error);

@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  vosk-server:
+    image: alphacep/vosk-server:latest
+    container_name: anvi-vosk-server
+    ports:
+      - "${VOSK_PORT:-2700}:2700"
+    volumes:
+      # Mount models directory - download Telugu model here
+      - ./models:/opt/vosk-server/models
+    environment:
+      - MODEL_PATH=/opt/vosk-server/models
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2700/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

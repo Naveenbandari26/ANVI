@@ -12,6 +12,7 @@ export class AuthController {
   register = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const userData = req.body;
+      console.log(userData);
       const result = await this.authService.register(userData);
       
       const response: ApiResponse = {
