@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { UserService } from './user.service';
 import { RegisterDto, LoginDto, AuthResponse } from '../types/auth.types';
+import { getJWTSecret, getJWTExpiresIn } from '../config/jwt';
 
 export class AuthService {
   private userService: UserService;
@@ -10,8 +11,8 @@ export class AuthService {
 
   constructor() {
     this.userService = new UserService();
-    this.jwtSecret = process.env.JWT_SECRET || 'your-secret-key';
-    this.jwtExpiresIn = process.env.JWT_EXPIRES_IN || '7d';
+    this.jwtSecret = getJWTSecret();
+    this.jwtExpiresIn = getJWTExpiresIn();
   }
 
   async register(userData: RegisterDto): Promise<AuthResponse> {

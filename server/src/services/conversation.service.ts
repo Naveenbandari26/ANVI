@@ -1,8 +1,10 @@
 import { ConversationModel, IConversation } from '../models/conversation.schema';
 import { CallModel } from '../models/call.schema';
-import { generateResponse, analyzeConversation, ConversationContext } from './gemini.service';
+import { generateResponse, analyzeConversation, ConversationContext, generateGreeting } from './gemini.service';
+import { extractTasks } from './gemini.service';
 import { io } from '../config/socket';
 import { UserModel } from '../models/user.schema';
+import { TaskModel } from '../models/task.schema';
 
 /**
  * Create a new conversation for a call
@@ -23,6 +25,117 @@ export async function createConversation(
   } catch (error) {
     console.error('Error creating conversation:', error);
     throw error;
+  }
+}
+
+/**
+ * Send initial greeting when call starts
+ */
+export async function sendInitialGreeting(
+  conversationId: string
+): Promise<void> {
+  try {
+    const conversation = await ConversationModel.findById(conversationId);
+    if (!conversation) {
+      throw new Error('Conversation not found');
+    }
+
+    // Get user info
+    const user = await UserModel.findById(conversation.userId).select('name');
+    
+    // Generate greeting in Telugu
+    const greeting = await generateGreeting(user?.name);
+
+    // Add greeting as assistant message
+    conversation.messages.push({
+      role: 'assistant',
+      content: greeting,
+      timestamp: new Date(),
+    });
+
+    // Update transcript
+    conversation.transcript += `ANVI: ${greeting}\n`;
+
+    // Save conversation
+    await conversation.save();
+
+    // Emit greeting to client
+    const callIdStr = conversation.callId.toString();
+    io.to(`call:${callIdStr}`).emit('ai_response', {
+      conversationId,
+      message: greeting,
+    });
+  } catch (error) {
+    console.error('Error sending initial greeting:', error);
+    // Fallback to default greeting - try to get callId from conversation
+    try {
+      const conversation = await ConversationModel.findById(conversationId);
+      if (conversation && conversation.callId) {
+        const defaultGreeting = 'హలో, మీరు ఎలా ఉన్నారు?';
+        io.to(`call:${conversation.callId.toString()}`).emit('ai_response', {
+          conversationId,
+          message: defaultGreeting,
+        });
+      }
+    } catch (fallbackError) {
+      console.error('Error in fallback greeting:', fallbackError);
+    }
+  }
+}
+
+/**
+ * Extract and create tasks from conversation in real-time
+ */
+export async function extractAndCreateTasks(
+  conversationId: string
+): Promise<void> {
+  try {
+    const conversation = await ConversationModel.findById(conversationId);
+    if (!conversation || !conversation.transcript || conversation.transcript.trim().length === 0) {
+      return;
+    }
+
+    // Extract tasks using Gemini
+    const extractedTasks = await extractTasks(conversation.transcript);
+
+    if (extractedTasks.length === 0) {
+      return;
+    }
+
+    // Check which tasks already exist to avoid duplicates
+    const existingTasks = await TaskModel.find({
+      conversationId: conversation._id,
+    }).select('title');
+
+    const existingTitles = new Set(existingTasks.map((t) => t.title.toLowerCase()));
+
+    // Create new tasks
+    const newTasks = extractedTasks.filter(
+      (task) => !existingTitles.has(task.title.toLowerCase())
+    );
+
+    if (newTasks.length > 0) {
+      await Promise.all(
+        newTasks.map(async (taskData) => {
+          await TaskModel.create({
+            userId: conversation.userId,
+            conversationId: conversation._id,
+            callId: conversation.callId,
+            title: taskData.title,
+            description: taskData.description,
+            priority: taskData.priority || 'medium',
+            status: 'pending',
+            dueDate: taskData.dueDate ? new Date(taskData.dueDate) : undefined,
+            scheduledTime: taskData.scheduledTime ? new Date(taskData.scheduledTime) : undefined,
+          });
+        })
+      );
+
+      console.log(`✅ Created ${newTasks.length} new task(s) from conversation ${conversationId}`);
+    }
+  } catch (error) {
+    console.error('Error extracting tasks in real-time:', error);
+    // Don't throw - this is a background process
   }
 }
 
@@ -84,6 +197,11 @@ export async function addMessageAndRespond(
 
     // Save conversation
     await conversation.save();
+
+    // Extract tasks in real-time (non-blocking)
+    extractAndCreateTasks(conversationId).catch((error) => {
+      console.error('Error in background task extraction:', error);
+    });
 
     // Emit response to client
     io.to(`call:${conversation.callId}`).emit('ai_response', {

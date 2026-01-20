@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { format, parseISO } from 'date-fns';
+import { useFocusEffect } from '@react-navigation/native';
 import { taskService, Task } from '../../src/services/task.service';
 
 export default function TasksScreen() {
@@ -24,16 +25,19 @@ export default function TasksScreen() {
       );
       setTasks(data);
     } catch (error) {
-      console.error('Error loading tasks:', error);
+      // Error handled by axios interceptor - silently fail
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
-  useEffect(() => {
-    loadTasks();
-  }, [filter]);
+  // Only load data when screen is focused
+  useFocusEffect(
+    useCallback(() => {
+      loadTasks();
+    }, [filter])
+  );
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -47,7 +51,7 @@ export default function TasksScreen() {
       await taskService.updateTask(task._id, { status: newStatus });
       loadTasks();
     } catch (error) {
-      console.error('Error updating task:', error);
+      // Error handled by axios interceptor - silently fail
     }
   };
 

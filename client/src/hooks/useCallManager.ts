@@ -57,8 +57,14 @@ export const useCallManager = () => {
       setActiveCall(callId);
       setActiveConversation(result.conversation._id);
       setIncomingCall(null);
+      
+      // Join call room to receive messages
+      const socket = getSocket();
+      if (socket) {
+        socket.emit('join_call_room', callId);
+      }
     } catch (error) {
-      console.error('Error accepting call:', error);
+      // Error handled by axios interceptor
       throw error;
     }
   }, []);
@@ -68,7 +74,7 @@ export const useCallManager = () => {
       await callService.declineCall(callId);
       setIncomingCall(null);
     } catch (error) {
-      console.error('Error declining call:', error);
+      // Error handled by axios interceptor
       throw error;
     }
   }, []);
@@ -79,7 +85,7 @@ export const useCallManager = () => {
       setActiveCall(null);
       setActiveConversation(null);
     } catch (error) {
-      console.error('Error ending call:', error);
+      // Error handled by axios interceptor
       throw error;
     }
   }, []);

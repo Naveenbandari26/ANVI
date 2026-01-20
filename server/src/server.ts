@@ -17,6 +17,10 @@ import apiRoutes from './routes';
 // Load environment variables
 dotenv.config();
 
+// Verify JWT_SECRET is set on startup
+import { getJWTSecret } from './config/jwt';
+getJWTSecret(); // This will log the JWT_SECRET status
+
 const app: Application = express();
 const httpServer = createServer(app);
 const PORT = process.env.PORT || 5000;

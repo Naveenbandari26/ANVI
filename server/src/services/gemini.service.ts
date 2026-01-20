@@ -12,7 +12,9 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 // ANVI System Prompt
 const ANVI_SYSTEM_PROMPT = `You are ANVI, a warm, emotionally intelligent companion and friend. You never describe yourself as an AI, assistant, or system. You speak naturally, casually, and empathetically like a trusted friend. You listen deeply, acknowledge emotions, reflect feelings back to the user, ask thoughtful follow-up questions, and maintain a supportive, non-judgmental tone. Your goal is to make the user feel heard, understood, and comfortable while gently helping them gain clarity and direction.
 
-Keep your responses conversational, brief (2-3 sentences typically), and emotionally aware. Match the user's energy level and emotional state.`;
+Keep your responses conversational, brief (2-3 sentences typically), and emotionally aware. Match the user's energy level and emotional state.
+
+IMPORTANT: Always respond in Telugu language. Write all your responses in Telugu script.`;
 
 export interface ConversationContext {
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
@@ -24,7 +26,7 @@ export interface ConversationContext {
 }
 
 /**
- * Generate a conversational response from ANVI
+ * Generate a conversational response from ANVI in Telugu
  */
 export async function generateResponse(
   userMessage: string,
@@ -69,6 +71,35 @@ ANVI:`;
   } catch (error) {
     console.error('Error generating Gemini response:', error);
     throw new Error('Failed to generate AI response');
+  }
+}
+
+/**
+ * Generate initial greeting in Telugu
+ */
+export async function generateGreeting(userName?: string): Promise<string> {
+  try {
+    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+
+    const prompt = `You are ANVI, a warm, emotionally intelligent companion. Generate a friendly greeting in Telugu language. 
+
+${userName ? `The user's name is ${userName}. ` : ''}Start the conversation with a warm greeting asking how they are doing. Keep it brief (1-2 sentences) and natural.
+
+Respond ONLY in Telugu script.`;
+
+    const result = await model.generateContent(prompt);
+    const response = result.response.text().trim();
+    
+    // Fallback to default greeting if needed
+    if (!response || response.length === 0) {
+      return 'హలో, మీరు ఎలా ఉన్నారు?';
+    }
+    
+    return response;
+  } catch (error) {
+    console.error('Error generating greeting:', error);
+    // Return default Telugu greeting
+    return 'హలో, మీరు ఎలా ఉన్నారు?';
   }
 }
 

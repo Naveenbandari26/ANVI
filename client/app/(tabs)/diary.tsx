@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { format, parseISO } from 'date-fns';
+import { useFocusEffect } from '@react-navigation/native';
 import { diaryService, DiaryEntry } from '../../src/services/diary.service';
 
 export default function DiaryScreen() {
@@ -21,16 +22,19 @@ export default function DiaryScreen() {
       const data = await diaryService.getDiaryEntries();
       setEntries(data);
     } catch (error) {
-      console.error('Error loading diary entries:', error);
+      // Error handled by axios interceptor - silently fail
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
-  useEffect(() => {
-    loadEntries();
-  }, []);
+  // Only load data when screen is focused
+  useFocusEffect(
+    useCallback(() => {
+      loadEntries();
+    }, [])
+  );
 
   const onRefresh = () => {
     setRefreshing(true);

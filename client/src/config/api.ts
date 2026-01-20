@@ -113,12 +113,23 @@ export const api = axios.create({
 // Add token to requests
 api.interceptors.request.use(
   async (config) => {
-    const token = await AsyncStorage.getItem('authToken');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+    try {
+      const token = await AsyncStorage.getItem('authToken');
+      if (token && token.trim()) {
+        // Ensure headers object exists
+        if (!config.headers) {
+          config.headers = {};
+        }
+        // Set Authorization header (case-sensitive)
+        config.headers['Authorization'] = `Bearer ${token.trim()}`;
+      } else {
+        // No token found - this is normal for public endpoints
+        // But for protected endpoints, the server will return 401
+      }
+    } catch (error) {
+      // If we can't get the token, continue without it
+      // The server will handle authentication
     }
-    // Log request URL for debugging
-    console.log(`🌐 API Request: ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`);
     return config;
   },
   (error) => {
@@ -130,21 +141,51 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
-    // Enhanced error logging
+    // Suppress axios errors - only log critical issues
+    const shouldLogError = 
+      error.code === 'ECONNREFUSED' || 
+      error.message === 'Network Error' ||
+      (error.response?.status === 401 && (
+        error.config?.url?.includes('/auth/') || 
+        error.config?.url?.includes('/calls') ||
+        error.config?.url?.includes('/conversations')
+      ));
+
     if (error.code === 'ECONNREFUSED' || error.message === 'Network Error') {
-      console.error('❌ Network Error - Cannot connect to backend');
-      console.error(`   Attempted URL: ${error.config?.baseURL}${error.config?.url}`);
-      console.error(`   Base URL: ${API_BASE_URL}`);
-      console.error('💡 Solutions:');
-      console.error('   1. Ensure backend server is running (npm run dev in server/)');
-      console.error('   2. If using physical device, set EXPO_PUBLIC_API_URL to your computer IP');
-      console.error('   3. Check if phone and computer are on same WiFi network');
+      // Only log network errors once, not for every request
+      if (!(global as any).__networkErrorLogged) {
+        console.error('❌ Network Error - Cannot connect to backend');
+        console.error(`   Base URL: ${API_BASE_URL}`);
+        (global as any).__networkErrorLogged = true;
+        setTimeout(() => {
+          (global as any).__networkErrorLogged = false;
+        }, 5000);
+      }
+      return Promise.reject(error);
     }
     
     if (error.response?.status === 401) {
-      // Clear token and redirect to login
-      await AsyncStorage.removeItem('authToken');
+      // Handle 401 errors - clear invalid/expired token
+      // This happens when:
+      // 1. Token is expired
+      // 2. Token was signed with different JWT_SECRET (server restarted)
+      // 3. Token is invalid/corrupted
+      try {
+        const token = await AsyncStorage.getItem('authToken');
+        if (token) {
+          // Clear the invalid token - user needs to log in again
+          await AsyncStorage.removeItem('authToken');
+          await AsyncStorage.removeItem('userId');
+        }
+      } catch (clearError) {
+        // If we can't clear, that's okay - token might already be gone
+      }
+      
+      // Don't log 401 errors - they're handled by components
+      // The error will be thrown to the component's catch block
     }
+    
+    // Suppress all other axios errors - they're handled by components
     return Promise.reject(error);
   }
 );

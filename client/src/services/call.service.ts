@@ -39,6 +39,11 @@ export const callService = {
     return response.data.data;
   },
 
+  async createScheduledCall(scheduledTime: string): Promise<Call> {
+    const response = await api.post('/calls', { scheduledTime });
+    return response.data.data;
+  },
+
   // Socket.io methods
   onIncomingCall(callback: (data: { callId: string; scheduledTime: string }) => void): void {
     const socket = getSocket();

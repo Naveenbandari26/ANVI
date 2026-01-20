@@ -1,16 +1,18 @@
 import { Request, Response, NextFunction } from 'express';
 import { CallModel } from '../models/call.schema';
-import { createConversation } from '../services/conversation.service';
+import { createConversation, sendInitialGreeting } from '../services/conversation.service';
 import { createDiaryFromConversation } from '../services/diary.service';
 import { createTasksFromConversation } from '../services/task.service';
 import { finalizeConversation } from '../services/conversation.service';
+import { createScheduledCall } from '../services/schedule.service';
+import { AuthRequest } from '../middleware/authenticate';
 
 /**
  * Get user's calls
  */
-export async function getUserCalls(req: Request, res: Response, next: NextFunction) {
+export async function getUserCalls(req: AuthRequest, res: Response, next: NextFunction) {
   try {
-    const userId = (req as any).user.id;
+    const userId = req.userId;
     const { status, limit = 20, skip = 0 } = req.query;
 
     const query: any = { userId };
@@ -36,10 +38,10 @@ export async function getUserCalls(req: Request, res: Response, next: NextFuncti
 /**
  * Get call by ID
  */
-export async function getCallById(req: Request, res: Response, next: NextFunction) {
+export async function getCallById(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const { callId } = req.params;
-    const userId = (req as any).user.id;
+    const userId = req.userId;
 
     const call = await CallModel.findOne({ _id: callId, userId }).populate('conversationId');
 
@@ -62,10 +64,10 @@ export async function getCallById(req: Request, res: Response, next: NextFunctio
 /**
  * Accept a call
  */
-export async function acceptCall(req: Request, res: Response, next: NextFunction) {
+export async function acceptCall(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const { callId } = req.params;
-    const userId = (req as any).user.id;
+    const userId = req.userId;
 
     const call = await CallModel.findOne({ _id: callId, userId });
 
@@ -90,6 +92,15 @@ export async function acceptCall(req: Request, res: Response, next: NextFunction
 
     // Create conversation
     const conversation = await createConversation(userId, call._id.toString());
+    
+    // Update call with conversation ID
+    call.conversationId = conversation._id;
+    await call.save();
+
+    // Send initial greeting in Telugu (non-blocking)
+    sendInitialGreeting(conversation._id.toString()).catch((error) => {
+      console.error('Error sending initial greeting:', error);
+    });
 
     res.json({
       success: true,
@@ -106,10 +117,10 @@ export async function acceptCall(req: Request, res: Response, next: NextFunction
 /**
  * Decline a call
  */
-export async function declineCall(req: Request, res: Response, next: NextFunction) {
+export async function declineCall(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const { callId } = req.params;
-    const userId = (req as any).user.id;
+    const userId = req.userId;
 
     const call = await CallModel.findOne({ _id: callId, userId });
 
@@ -134,12 +145,60 @@ export async function declineCall(req: Request, res: Response, next: NextFunctio
 }
 
 /**
+ * Create a scheduled call
+ */
+export async function createScheduledCallHandler(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authorization token required',
+      });
+    }
+    const userId = req.userId;
+    const { scheduledTime } = req.body;
+
+    if (!scheduledTime) {
+      return res.status(400).json({
+        success: false,
+        message: 'scheduledTime is required',
+      });
+    }
+
+    const scheduledDate = new Date(scheduledTime);
+    if (isNaN(scheduledDate.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid scheduledTime format',
+      });
+    }
+
+    // Check if scheduled time is in the future
+    if (scheduledDate.getTime() <= Date.now()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Scheduled time must be in the future',
+      });
+    }
+
+    const call = await createScheduledCall(userId, scheduledDate);
+
+    res.status(201).json({
+      success: true,
+      data: call,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
  * End a call
  */
-export async function endCall(req: Request, res: Response, next: NextFunction) {
+export async function endCall(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const { callId } = req.params;
-    const userId = (req as any).user.id;
+    const userId = req.userId;
 
     const call = await CallModel.findOne({ _id: callId, userId }).populate('conversationId');
 

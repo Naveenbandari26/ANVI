@@ -22,9 +22,17 @@ export function initializeSocket(server: HTTPServer): SocketIOServer {
       console.log(`👤 User ${userId} joined their room`);
     });
 
+    // Join a call room
+    socket.on('join_call_room', (callId: string) => {
+      socket.join(`call:${callId}`);
+      console.log(`📞 Socket ${socket.id} joined call room: call:${callId}`);
+    });
+
     // Handle call acceptance
     socket.on('accept_call', async (data: { callId: string; userId: string }) => {
       console.log(`📞 Call ${data.callId} accepted by user ${data.userId}`);
+      // Join the call room to receive messages
+      socket.join(`call:${data.callId}`);
       socket.to(`user:${data.userId}`).emit('call_accepted', { callId: data.callId });
     });
 

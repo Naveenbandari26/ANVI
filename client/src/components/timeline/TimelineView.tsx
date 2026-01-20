@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { format, parseISO } from 'date-fns';
+import { useFocusEffect } from '@react-navigation/native';
 import { callService, Call } from '../../services/call.service';
 import { diaryService, DiaryEntry } from '../../services/diary.service';
 import { taskService, Task } from '../../services/task.service';
@@ -59,16 +60,19 @@ export const TimelineView: React.FC = () => {
 
       setItems(timelineItems);
     } catch (error) {
-      console.error('Error loading timeline:', error);
+      // Error handled by axios interceptor - silently fail
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
-  useEffect(() => {
-    loadTimeline();
-  }, []);
+  // Only load data when screen is focused
+  useFocusEffect(
+    useCallback(() => {
+      loadTimeline();
+    }, [])
+  );
 
   const onRefresh = () => {
     setRefreshing(true);

@@ -39,7 +39,7 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
   useEffect(() => {
     return () => {
       if (soundRef.current) {
-        soundRef.current.unloadAsync().catch(console.error);
+        soundRef.current.unloadAsync().catch(() => {});
         soundRef.current = null;
       }
     };
@@ -82,7 +82,7 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
         if (status.isLoaded) {
           if (status.didJustFinish) {
             setIsPlayingTTS(false);
-            sound.unloadAsync().catch(console.error);
+            sound.unloadAsync().catch(() => {});
             soundRef.current = null;
           }
         }
@@ -95,10 +95,17 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
   };
 
   useEffect(() => {
-    // Listen for AI responses
+    // Listen for AI responses (including initial greeting)
     const handleAIResponse = async (data: { conversationId: string; message: string }) => {
       if (data.conversationId === conversationId) {
-        setMessages((prev) => [...prev, { role: 'assistant', content: data.message }]);
+        setMessages((prev) => {
+          // Avoid duplicate messages
+          const isDuplicate = prev.some(
+            (msg) => msg.role === 'assistant' && msg.content === data.message
+          );
+          if (isDuplicate) return prev;
+          return [...prev, { role: 'assistant', content: data.message }];
+        });
         setIsProcessing(false);
         
         // Play AI response as Telugu TTS audio
@@ -126,7 +133,7 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
       await startRecording();
       setIsRecording(true);
     } catch (error) {
-      console.error('Error starting recording:', error);
+      // Error handled silently - recording may not be available
     }
   };
 
@@ -157,7 +164,7 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
         staysActiveInBackground: false,
       });
     } catch (error) {
-      console.error('Error stopping recording:', error);
+      // Error handled silently
       setIsProcessing(false);
     }
   };
@@ -179,7 +186,7 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
       await callService.endCall(callId);
       onEndCall();
     } catch (error) {
-      console.error('Error ending call:', error);
+      // Error handled by axios interceptor - call ended anyway
     }
   };
 

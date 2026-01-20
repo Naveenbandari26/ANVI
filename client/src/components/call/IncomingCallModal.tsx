@@ -72,7 +72,7 @@ export const IncomingCallModal: React.FC<IncomingCallModalProps> = ({
       }
       onAccept();
     } catch (error) {
-      console.error('Error accepting call:', error);
+      // Error handled by axios interceptor - silently fail
     }
   };
 
@@ -85,7 +85,7 @@ export const IncomingCallModal: React.FC<IncomingCallModalProps> = ({
       }
       onDecline();
     } catch (error) {
-      console.error('Error declining call:', error);
+      // Error handled by axios interceptor - silently fail
     }
   };
 
