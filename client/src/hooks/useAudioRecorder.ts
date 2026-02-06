@@ -3,9 +3,8 @@ import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Note: In a production app, you would integrate with a speech-to-text service
-// For now, this is a placeholder that simulates transcription
-// You would replace this with actual STT service integration (e.g., Google Speech-to-Text, Azure, etc.)
+// Note: In a production app, you would integrate with a full speech-to-text service
+import api from '../config/api';
 
 export const useAudioRecorder = () => {
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
@@ -48,7 +47,7 @@ export const useAudioRecorder = () => {
       await recording.stopAndUnloadAsync();
       const uri = recording.getURI();
       setRecording(null);
-      
+
       if (!uri) {
         throw new Error('No recording URI');
       }
@@ -70,23 +69,13 @@ export const useAudioRecorder = () => {
         name: 'recording.wav',
       } as any);
 
-      const response = await fetch(
-        `${process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000'}/api/v1/stt/file`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${await AsyncStorage.getItem('authToken')}`,
-          },
-          body: formData,
-        }
-      );
+      const response = await api.post('/stt/file', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
 
-      if (!response.ok) {
-        throw new Error('Transcription failed');
-      }
-
-      const data = await response.json();
-      return data.data?.transcription || null;
+      return response.data.data?.transcription || null;
     } catch (error) {
       console.error('Error transcribing audio:', error);
       return null;

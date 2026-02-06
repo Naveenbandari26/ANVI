@@ -16,6 +16,18 @@ Keep your responses conversational, brief (2-3 sentences typically), and emotion
 
 IMPORTANT: Always respond in Telugu language. Write all your responses in Telugu script.`;
 
+/**
+ * Robust model selection with fallback
+ */
+function getModel() {
+  // We try standard model names without explicit apiVersion to let the SDK decide
+  try {
+    return genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  } catch (e) {
+    return genAI.getGenerativeModel({ model: 'gemini-pro' });
+  }
+}
+
 export interface ConversationContext {
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
   userInfo?: {
@@ -33,7 +45,7 @@ export async function generateResponse(
   context: ConversationContext
 ): Promise<string> {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+    const model = getModel();
 
     // Build conversation history
     const conversationHistory = context.messages
@@ -75,35 +87,6 @@ ANVI:`;
 }
 
 /**
- * Generate initial greeting in Telugu
- */
-export async function generateGreeting(userName?: string): Promise<string> {
-  try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
-
-    const prompt = `You are ANVI, a warm, emotionally intelligent companion. Generate a friendly greeting in Telugu language. 
-
-${userName ? `The user's name is ${userName}. ` : ''}Start the conversation with a warm greeting asking how they are doing. Keep it brief (1-2 sentences) and natural.
-
-Respond ONLY in Telugu script.`;
-
-    const result = await model.generateContent(prompt);
-    const response = result.response.text().trim();
-    
-    // Fallback to default greeting if needed
-    if (!response || response.length === 0) {
-      return 'హలో, మీరు ఎలా ఉన్నారు?';
-    }
-    
-    return response;
-  } catch (error) {
-    console.error('Error generating greeting:', error);
-    // Return default Telugu greeting
-    return 'హలో, మీరు ఎలా ఉన్నారు?';
-  }
-}
-
-/**
  * Generate a diary entry from conversation transcript
  */
 export async function generateDiaryEntry(transcript: string, conversationSummary?: string): Promise<{
@@ -115,7 +98,7 @@ export async function generateDiaryEntry(transcript: string, conversationSummary
   importantEvents: string[];
 }> {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+    const model = getModel();
 
     const prompt = `Based on the following conversation transcript, create a first-person reflective diary entry as if written by the user. The entry should be warm, introspective, and capture the emotional journey of the conversation.
 
@@ -189,7 +172,7 @@ export async function extractTasks(transcript: string): Promise<Array<{
   scheduledTime?: string;
 }>> {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+    const model = getModel();
 
     const prompt = `Analyze the following conversation transcript and extract all actionable tasks, commitments, reminders, and follow-ups mentioned by the user.
 
@@ -245,7 +228,7 @@ export async function analyzeConversation(transcript: string): Promise<{
   keyTopics: string[];
 }> {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+    const model = getModel();
 
     const prompt = `Analyze the following conversation and provide:
 1. A concise summary (2-3 sentences)
@@ -293,5 +276,3 @@ Respond in JSON format:
     };
   }
 }
-
-

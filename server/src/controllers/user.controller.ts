@@ -27,7 +27,7 @@ export class UserController {
     try {
       const { id } = req.params;
       const user = await this.userService.getUserById(id);
-      
+
       if (!user) {
         res.status(404).json({
           success: false,
@@ -51,7 +51,7 @@ export class UserController {
     try {
       const userData = req.body;
       const user = await this.userService.createUser(userData);
-      
+
       const response: ApiResponse = {
         success: true,
         message: 'User created successfully',
@@ -68,7 +68,7 @@ export class UserController {
       const { id } = req.params;
       const userData = req.body;
       const user = await this.userService.updateUser(id, userData);
-      
+
       if (!user) {
         res.status(404).json({
           success: false,
@@ -92,7 +92,7 @@ export class UserController {
     try {
       const { id } = req.params;
       const deleted = await this.userService.deleteUser(id);
-      
+
       if (!deleted) {
         res.status(404).json({
           success: false,

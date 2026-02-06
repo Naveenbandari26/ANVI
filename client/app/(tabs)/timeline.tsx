@@ -2,32 +2,10 @@ import React from 'react';
 import { View, StyleSheet, ScrollView } from 'react-native';
 import { TimelineView } from '../../src/components/timeline/TimelineView';
 import { ScheduledCallsView } from '../../src/components/call/ScheduledCallsView';
-import { useCallManager } from '../../src/hooks/useCallManager';
-import { IncomingCallModal } from '../../src/components/call/IncomingCallModal';
-import { ActiveCallScreen } from '../../src/components/call/ActiveCallScreen';
 import { Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function TimelineScreen() {
-  const {
-    incomingCall,
-    activeCall,
-    activeConversation,
-    acceptCall,
-    declineCall,
-    endCall,
-  } = useCallManager();
-
-  if (activeCall && activeConversation) {
-    return (
-      <ActiveCallScreen
-        callId={activeCall}
-        conversationId={activeConversation}
-        onEndCall={() => endCall(activeCall)}
-      />
-    );
-  }
-
   return (
     <View style={styles.container}>
       <ScrollView style={styles.scrollView}>
@@ -46,14 +24,6 @@ export default function TimelineScreen() {
           <TimelineView />
         </View>
       </ScrollView>
-      {incomingCall && (
-        <IncomingCallModal
-          visible={!!incomingCall}
-          callId={incomingCall.callId}
-          onAccept={() => acceptCall(incomingCall.callId)}
-          onDecline={() => declineCall(incomingCall.callId)}
-        />
-      )}
     </View>
   );
 }

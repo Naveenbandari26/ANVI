@@ -39,7 +39,7 @@ export const conversationService = {
   },
 
   // Socket.io methods
-  onAIResponse(callback: (data: { conversationId: string; message: string }) => void): void {
+  onAIResponse(callback: (data: { conversationId: string; message: string; audio?: string }) => void): void {
     const socket = getSocket();
     socket?.on('ai_response', callback);
   },

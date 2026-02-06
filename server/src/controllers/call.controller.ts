@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+import { Response, NextFunction } from 'express';
 import { CallModel } from '../models/call.schema';
 import { createConversation, sendInitialGreeting } from '../services/conversation.service';
 import { createDiaryFromConversation } from '../services/diary.service';
@@ -26,7 +26,7 @@ export async function getUserCalls(req: AuthRequest, res: Response, next: NextFu
       .skip(Number(skip))
       .populate('conversationId');
 
-    res.json({
+    return res.json({
       success: true,
       data: calls,
     });
@@ -52,7 +52,7 @@ export async function getCallById(req: AuthRequest, res: Response, next: NextFun
       });
     }
 
-    res.json({
+    return res.json({
       success: true,
       data: call,
     });
@@ -72,13 +72,17 @@ export async function acceptCall(req: AuthRequest, res: Response, next: NextFunc
     const call = await CallModel.findOne({ _id: callId, userId });
 
     if (!call) {
+      console.log(`❌ Accept call failed: Call ${callId} not found for user ${userId}`);
       return res.status(404).json({
         success: false,
         message: 'Call not found',
       });
     }
 
+    console.log(`📞 Attempting to accept call ${callId}. Current status: ${call.status}`);
+
     if (call.status !== 'ringing') {
+      console.log(`⚠️  Accept call failed: Status is ${call.status}, expected 'ringing'`);
       return res.status(400).json({
         success: false,
         message: 'Call is not in ringing state',
@@ -91,18 +95,18 @@ export async function acceptCall(req: AuthRequest, res: Response, next: NextFunc
     await call.save();
 
     // Create conversation
-    const conversation = await createConversation(userId, call._id.toString());
-    
+    const conversation = await createConversation(userId!, call._id.toString());
+
     // Update call with conversation ID
-    call.conversationId = conversation._id;
+    call.conversationId = conversation._id as any;
     await call.save();
 
-    // Send initial greeting in Telugu (non-blocking)
+    // Send initial greeting in Telugu (non-blocking) - Now using a static greeting
     sendInitialGreeting(conversation._id.toString()).catch((error) => {
       console.error('Error sending initial greeting:', error);
     });
 
-    res.json({
+    return res.json({
       success: true,
       data: {
         call,
@@ -183,7 +187,7 @@ export async function createScheduledCallHandler(req: AuthRequest, res: Response
 
     const call = await createScheduledCall(userId, scheduledDate);
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       data: call,
     });

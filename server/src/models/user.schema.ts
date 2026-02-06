@@ -5,6 +5,7 @@ export interface IUser extends Document {
   email: string;
   password: string;
   name: string;
+  pushToken?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -32,6 +33,10 @@ const UserSchema: Schema = new Schema(
       trim: true,
       minlength: [2, 'Name must be at least 2 characters long'],
       maxlength: [100, 'Name cannot exceed 100 characters'],
+    },
+    pushToken: {
+      type: String,
+      index: true,
     },
   },
   {

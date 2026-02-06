@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { ScheduleModel, ISchedule } from '../models/schedule.schema';
 import { CallModel } from '../models/call.schema';
 import { io } from '../config/socket';
+import { sendCallNotification } from './notification.service';
 
 // Store active cron jobs
 const activeCronJobs = new Map<string, cron.ScheduledTask>();
@@ -12,37 +13,37 @@ const activeCronJobs = new Map<string, cron.ScheduledTask>();
 export function calculateNextTrigger(schedule: ISchedule): Date {
   const now = new Date();
   const [hours, minutes] = schedule.time.split(':').map(Number);
-  
+
   // Get current day of week (0 = Sunday, 6 = Saturday)
   const currentDay = now.getDay();
-  
+
   // Find next scheduled day
   const sortedDays = [...schedule.daysOfWeek].sort((a, b) => a - b);
   let nextDay = sortedDays.find(day => day > currentDay);
-  
+
   // If no day found in current week, use first day of next week
   if (!nextDay) {
     nextDay = sortedDays[0];
   }
-  
-  const daysUntilNext = nextDay > currentDay 
-    ? nextDay - currentDay 
+
+  const daysUntilNext = nextDay > currentDay
+    ? nextDay - currentDay
     : (7 - currentDay) + nextDay;
-  
+
   const nextTrigger = new Date(now);
   nextTrigger.setDate(now.getDate() + daysUntilNext);
   nextTrigger.setHours(hours, minutes, 0, 0);
-  
+
   // If it's today and time hasn't passed, use today
   if (daysUntilNext === 0 && nextTrigger > now) {
     return nextTrigger;
   }
-  
+
   // If time has passed today, move to next occurrence
   if (nextTrigger <= now) {
     nextTrigger.setDate(nextTrigger.getDate() + 7);
   }
-  
+
   return nextTrigger;
 }
 
@@ -56,7 +57,7 @@ export async function createScheduledCall(userId: string, scheduledTime: Date): 
       scheduledTime,
       status: 'scheduled',
     });
-    
+
     return call;
   } catch (error) {
     console.error('Error creating scheduled call:', error);
@@ -70,25 +71,28 @@ export async function createScheduledCall(userId: string, scheduledTime: Date): 
 export async function triggerCall(schedule: ISchedule): Promise<void> {
   try {
     const scheduledTime = new Date();
-    
+
     // Create call record
     const call = await CallModel.create({
       userId: schedule.userId,
       scheduledTime,
       status: 'ringing',
     });
-    
+
     // Update schedule
     schedule.lastTriggered = new Date();
     schedule.nextTrigger = calculateNextTrigger(schedule);
     await schedule.save();
-    
+
     // Emit call event to user via WebSocket
     io.to(`user:${schedule.userId}`).emit('incoming_call', {
       callId: call._id.toString(),
       scheduledTime: call.scheduledTime,
     });
-    
+
+    // Send push notification
+    sendCallNotification(schedule.userId.toString(), call._id.toString()).catch(console.error);
+
     console.log(`📞 Triggered call for user ${schedule.userId}, call ID: ${call._id}`);
   } catch (error) {
     console.error('Error triggering call:', error);
@@ -100,22 +104,22 @@ export async function triggerCall(schedule: ISchedule): Promise<void> {
  */
 export function startScheduleCron(schedule: ISchedule): void {
   const scheduleId = schedule._id.toString();
-  
+
   // Stop existing cron if any
   stopScheduleCron(scheduleId);
-  
+
   if (!schedule.isActive) {
     return;
   }
-  
+
   // Build cron expression: minute hour * * dayOfWeek
   // Convert days of week: 0=Sunday in cron, but we use 0=Sunday too
   const daysCron = schedule.daysOfWeek.join(',');
   const [hours, minutes] = schedule.time.split(':');
-  
+
   // Cron format: minute hour dayOfMonth month dayOfWeek
   const cronExpression = `${minutes} ${hours} * * ${daysCron}`;
-  
+
   const task = cron.schedule(cronExpression, async () => {
     try {
       // Refresh schedule from DB to get latest data
@@ -130,13 +134,13 @@ export function startScheduleCron(schedule: ISchedule): void {
     scheduled: true,
     timezone: schedule.timezone || 'UTC',
   });
-  
+
   activeCronJobs.set(scheduleId, task);
-  
+
   // Calculate and update next trigger
   schedule.nextTrigger = calculateNextTrigger(schedule);
   schedule.save().catch(console.error);
-  
+
   console.log(`✅ Started cron job for schedule ${scheduleId}: ${cronExpression}`);
 }
 
@@ -158,12 +162,48 @@ export function stopScheduleCron(scheduleId: string): void {
 export async function initializeSchedules(): Promise<void> {
   try {
     const schedules = await ScheduleModel.find({ isActive: true });
-    
+
     for (const schedule of schedules) {
       startScheduleCron(schedule);
     }
-    
+
     console.log(`✅ Initialized ${schedules.length} active schedules`);
+
+    // Start a background job to check for one-off scheduled calls every 10 seconds for higher precision
+    setInterval(async () => {
+      try {
+        const now = new Date();
+        // Look for calls that are due now or within the next 10 seconds to catch them early
+        const dueCalls = await CallModel.find({
+          status: 'scheduled',
+          scheduledTime: { $lte: new Date(now.getTime() + 10000) },
+        });
+
+        for (const call of dueCalls) {
+          // Double check to avoid race conditions if multiple triggers happen
+          const freshCall = await CallModel.findById(call._id);
+          if (!freshCall || freshCall.status !== 'scheduled') continue;
+
+          // Update call status to ringing
+          freshCall.status = 'ringing';
+          await freshCall.save();
+
+          // Emit call event to user via WebSocket
+          io.to(`user:${freshCall.userId}`).emit('incoming_call', {
+            callId: freshCall._id.toString(),
+            scheduledTime: freshCall.scheduledTime,
+          });
+
+          // Send push notification
+          sendCallNotification(freshCall.userId.toString(), freshCall._id.toString()).catch(console.error);
+
+          console.log(`📞 Triggered precise one-off call for user ${freshCall.userId}, call ID: ${freshCall._id}`);
+        }
+      } catch (error) {
+        console.error('Error in one-off call trigger job:', error);
+      }
+    }, 10000); // 10 second interval
+    console.log('⏱️ Started high-precision background job for one-off scheduled calls');
   } catch (error) {
     console.error('Error initializing schedules:', error);
   }

@@ -1,7 +1,8 @@
 import { ConversationModel, IConversation } from '../models/conversation.schema';
 import { CallModel } from '../models/call.schema';
-import { generateResponse, analyzeConversation, ConversationContext, generateGreeting } from './gemini.service';
+import { generateResponse, analyzeConversation, ConversationContext } from './gemini.service';
 import { extractTasks } from './gemini.service';
+import { generateTeluguSpeech } from './tts.service';
 import { io } from '../config/socket';
 import { UserModel } from '../models/user.schema';
 import { TaskModel } from '../models/task.schema';
@@ -42,9 +43,11 @@ export async function sendInitialGreeting(
 
     // Get user info
     const user = await UserModel.findById(conversation.userId).select('name');
-    
-    // Generate greeting in Telugu
-    const greeting = await generateGreeting(user?.name);
+
+    // Use a static warm greeting in Telugu to ensure immediate response
+    const greeting = user?.name
+      ? `హలో ${user.name}, నేను ANVIని. మీరు ఎలా ఉన్నారు?`
+      : 'హలో, నేను ANVIని. మీరు ఎలా ఉన్నారు?';
 
     // Add greeting as assistant message
     conversation.messages.push({
@@ -61,9 +64,20 @@ export async function sendInitialGreeting(
 
     // Emit greeting to client
     const callIdStr = conversation.callId.toString();
+
+    // Generate audio for the greeting
+    let audioData = null;
+    try {
+      const ttsResponse = await generateTeluguSpeech(greeting);
+      audioData = ttsResponse.audio;
+    } catch (ttsError) {
+      console.error('TTS generation failed for greeting:', ttsError);
+    }
+
     io.to(`call:${callIdStr}`).emit('ai_response', {
       conversationId,
       message: greeting,
+      audio: audioData, // Send base64 audio if available
     });
   } catch (error) {
     console.error('Error sending initial greeting:', error);
@@ -203,10 +217,20 @@ export async function addMessageAndRespond(
       console.error('Error in background task extraction:', error);
     });
 
+    // Generate audio for the AI response
+    let audioData = null;
+    try {
+      const ttsResponse = await generateTeluguSpeech(assistantMessage);
+      audioData = ttsResponse.audio;
+    } catch (ttsError) {
+      console.error('TTS generation failed for message:', ttsError);
+    }
+
     // Emit response to client
     io.to(`call:${conversation.callId}`).emit('ai_response', {
       conversationId,
       message: assistantMessage,
+      audio: audioData,
     });
 
     return {

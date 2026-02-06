@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { callService } from '../services/call.service';
 import { initializeSocket, getSocket } from '../config/socket';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { scheduleIncomingCallNotification } from './usePushNotifications';
 
 interface IncomingCall {
   callId: string;
@@ -20,12 +21,30 @@ export const useCallManager = () => {
       try {
         await initializeSocket();
         const userId = await AsyncStorage.getItem('userId');
-        
+
         if (!userId) return;
+
+        // Check for any currently ringing calls for this user
+        const ringingCalls = await callService.getUserCalls('ringing');
+        if (mounted && ringingCalls.length > 0) {
+          // Only show calls that are very recent (less than 2 minutes old)
+          const latestCall = ringingCalls[0];
+          const scheduledDate = new Date(latestCall.scheduledTime);
+          const now = new Date();
+          const AgeInMinutes = (now.getTime() - scheduledDate.getTime()) / 60000;
+
+          if (AgeInMinutes < 2) {
+            setIncomingCall({
+              callId: latestCall._id,
+              scheduledTime: latestCall.scheduledTime,
+            });
+          }
+        }
 
         const handleIncomingCall = (data: IncomingCall) => {
           if (mounted) {
             setIncomingCall(data);
+            scheduleIncomingCallNotification(data.callId);
           }
         };
 
@@ -40,7 +59,7 @@ export const useCallManager = () => {
           }
         };
       } catch (error) {
-        console.error('Error setting up socket:', error);
+        console.error('Error setting up socket and initial call check:', error);
       }
     };
 
@@ -57,11 +76,12 @@ export const useCallManager = () => {
       setActiveCall(callId);
       setActiveConversation(result.conversation._id);
       setIncomingCall(null);
-      
-      // Join call room to receive messages
+
+      // Notify server and join call room
       const socket = getSocket();
-      if (socket) {
-        socket.emit('join_call_room', callId);
+      const userId = await AsyncStorage.getItem('userId');
+      if (socket && userId) {
+        socket.emit('accept_call', { callId, userId });
       }
     } catch (error) {
       // Error handled by axios interceptor
@@ -73,6 +93,12 @@ export const useCallManager = () => {
     try {
       await callService.declineCall(callId);
       setIncomingCall(null);
+
+      const socket = getSocket();
+      const userId = await AsyncStorage.getItem('userId');
+      if (socket && userId) {
+        socket.emit('decline_call', { callId, userId });
+      }
     } catch (error) {
       // Error handled by axios interceptor
       throw error;

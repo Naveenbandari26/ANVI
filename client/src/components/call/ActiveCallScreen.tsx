@@ -39,22 +39,30 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
   useEffect(() => {
     return () => {
       if (soundRef.current) {
-        soundRef.current.unloadAsync().catch(() => {});
+        soundRef.current.unloadAsync().catch(() => { });
         soundRef.current = null;
       }
     };
   }, []);
 
   // Play TTS audio
-  const playTTSAudio = async (text: string) => {
+  const playTTSAudio = async (text: string, audioData?: string) => {
     try {
       setIsPlayingTTS(true);
 
-      // Generate TTS audio
-      const audioBase64 = await generateTTS({
-        text: text,
-        speaker: 'lalitha', // Use Lalitha voice for Telugu
-      });
+      let audioUri: string;
+
+      if (audioData) {
+        // Use the audio data provided by the server
+        audioUri = `data:audio/wav;base64,${audioData}`;
+      } else {
+        // Fallback: Generate TTS audio locally if not provided by server
+        const audioBase64 = await generateTTS({
+          text: text,
+          speaker: 'lalitha',
+        });
+        audioUri = `data:audio/wav;base64,${audioBase64}`;
+      }
 
       // Stop any currently playing audio
       if (soundRef.current) {
@@ -69,9 +77,9 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
         staysActiveInBackground: false,
       });
 
-      // Create and play audio from base64
+      // Create and play audio
       const { sound } = await Audio.Sound.createAsync(
-        { uri: `data:audio/wav;base64,${audioBase64}` },
+        { uri: audioUri },
         { shouldPlay: true }
       );
 
@@ -82,7 +90,7 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
         if (status.isLoaded) {
           if (status.didJustFinish) {
             setIsPlayingTTS(false);
-            sound.unloadAsync().catch(() => {});
+            sound.unloadAsync().catch(() => { });
             soundRef.current = null;
           }
         }
@@ -96,7 +104,7 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
 
   useEffect(() => {
     // Listen for AI responses (including initial greeting)
-    const handleAIResponse = async (data: { conversationId: string; message: string }) => {
+    const handleAIResponse = async (data: { conversationId: string; message: string; audio?: string }) => {
       if (data.conversationId === conversationId) {
         setMessages((prev) => {
           // Avoid duplicate messages
@@ -107,9 +115,9 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
           return [...prev, { role: 'assistant', content: data.message }];
         });
         setIsProcessing(false);
-        
-        // Play AI response as Telugu TTS audio
-        await playTTSAudio(data.message);
+
+        // Play AI response as Telugu TTS audio (prioritizing server-provided audio)
+        await playTTSAudio(data.message, data.audio);
       }
     };
 
@@ -129,7 +137,7 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
         soundRef.current = null;
         setIsPlayingTTS(false);
       }
-      
+
       await startRecording();
       setIsRecording(true);
     } catch (error) {
@@ -141,22 +149,22 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
     try {
       setIsRecording(false);
       setIsProcessing(true);
-      
+
       const audioUri = await stopRecording();
       const userTranscript = await getTranscript(audioUri);
-      
+
       if (userTranscript) {
         // Update local transcript
         setTranscript((prev) => prev + userTranscript + ' ');
         setMessages((prev) => [...prev, { role: 'user', content: userTranscript }]);
-        
+
         // Send to backend
         await conversationService.processTranscript(conversationId, userTranscript);
         await conversationService.sendMessage(conversationId, userTranscript);
       }
-      
+
       setIsProcessing(false);
-      
+
       // Switch audio mode back to allow playback
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: false,
@@ -175,14 +183,14 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
       if (isRecording) {
         await stopRecording();
       }
-      
+
       // Stop TTS playback if active
       if (soundRef.current) {
         await soundRef.current.unloadAsync();
         soundRef.current = null;
         setIsPlayingTTS(false);
       }
-      
+
       await callService.endCall(callId);
       onEndCall();
     } catch (error) {

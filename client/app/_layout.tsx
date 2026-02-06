@@ -4,6 +4,9 @@ import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { usePushNotifications } from '@/src/hooks/usePushNotifications';
+
+import { CallOverlay } from '@/src/components/call/CallOverlay';
 
 export const unstable_settings = {
   initialRouteName: 'splash',
@@ -11,6 +14,7 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
+  usePushNotifications();
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
@@ -21,6 +25,7 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
       </Stack>
+      <CallOverlay />
       <StatusBar style="auto" />
     </ThemeProvider>
   );

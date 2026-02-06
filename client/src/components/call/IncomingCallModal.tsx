@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { Audio } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { callService } from '../../services/call.service';
 import { getSocket } from '../../config/socket';
@@ -31,62 +32,78 @@ export const IncomingCallModal: React.FC<IncomingCallModalProps> = ({
 }) => {
   const [ringAnimation] = useState(new Animated.Value(1));
   const [userId, setUserId] = useState<string | null>(null);
+  const ringtoneRef = React.useRef<Audio.Sound | null>(null);
 
   useEffect(() => {
     AsyncStorage.getItem('userId').then(setUserId);
   }, []);
 
   useEffect(() => {
-    if (visible) {
-      // Start ringing animation
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(ringAnimation, {
-            toValue: 1.2,
-            duration: 1000,
-            useNativeDriver: true,
-          }),
-          Animated.timing(ringAnimation, {
-            toValue: 1,
-            duration: 1000,
-            useNativeDriver: true,
-          }),
-        ])
-      ).start();
+    let isMounted = true;
 
-      // Haptic feedback
-      const hapticInterval = setInterval(() => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      }, 1000);
+    const startRinging = async () => {
+      try {
+        if (visible) {
+          // Play ringtone
+          const { sound } = await Audio.Sound.createAsync(
+            require('../../../assets/sounds/mixkit-sci-fi-click-900.mp3'),
+            { shouldPlay: true, isLooping: true }
+          );
+          if (isMounted) {
+            ringtoneRef.current = sound;
+          } else {
+            sound.unloadAsync();
+          }
 
-      return () => clearInterval(hapticInterval);
-    }
+          // Start ringing animation
+          Animated.loop(
+            Animated.sequence([
+              Animated.timing(ringAnimation, {
+                toValue: 1.2,
+                duration: 1000,
+                useNativeDriver: true,
+              }),
+              Animated.timing(ringAnimation, {
+                toValue: 1,
+                duration: 1000,
+                useNativeDriver: true,
+              }),
+            ])
+          ).start();
+
+          // Haptic feedback
+          const hapticInterval = setInterval(() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          }, 1000);
+
+          return () => {
+            clearInterval(hapticInterval);
+            if (ringtoneRef.current) {
+              ringtoneRef.current.stopAsync();
+              ringtoneRef.current.unloadAsync();
+              ringtoneRef.current = null;
+            }
+          };
+        }
+      } catch (error) {
+        console.error('Error playing ringtone:', error);
+      }
+    };
+
+    const cleanup = startRinging();
+
+    return () => {
+      isMounted = false;
+      cleanup.then(cleanupFn => cleanupFn && cleanupFn());
+    };
   }, [visible]);
 
-  const handleAccept = async () => {
-    try {
-      await callService.acceptCall(callId);
-      const socket = getSocket();
-      if (socket && userId) {
-        socket.emit('accept_call', { callId, userId });
-      }
-      onAccept();
-    } catch (error) {
-      // Error handled by axios interceptor - silently fail
-    }
+  const handleAccept = () => {
+    onAccept();
   };
 
-  const handleDecline = async () => {
-    try {
-      await callService.declineCall(callId);
-      const socket = getSocket();
-      if (socket && userId) {
-        socket.emit('decline_call', { callId, userId });
-      }
-      onDecline();
-    } catch (error) {
-      // Error handled by axios interceptor - silently fail
-    }
+  const handleDecline = () => {
+    onDecline();
   };
 
   return (
