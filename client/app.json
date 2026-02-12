@@ -57,6 +57,21 @@
           "microphonePermission": "Allow ANVI to listen to your voice.",
           "speechRecognitionPermission": "Allow ANVI to process your speech."
         }
+      ],
+      [
+        "react-native-callkeep",
+        {
+          "ios": {
+            "appName": "ANVI"
+          },
+          "android": {
+            "foregroundService": {
+              "channelId": "com.anvi.call",
+              "channelName": "ANVI Calls",
+              "notificationTitle": "ANVI is calling"
+            }
+          }
+        }
       ]
     ],
     "experiments": {

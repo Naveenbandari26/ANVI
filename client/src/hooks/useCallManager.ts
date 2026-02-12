@@ -3,6 +3,15 @@ import { callService } from '../services/call.service';
 import { initializeSocket, getSocket } from '../config/socket';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { scheduleIncomingCallNotification } from './usePushNotifications';
+import {
+  initializeCallKeep,
+  displayIncomingCall,
+  endCall as endNativeCall,
+  answerCall as answerNativeCall,
+  rejectCall as rejectNativeCall,
+  setupCallKeepListeners,
+  isNativeCallAvailable,
+} from '../services/nativeCall.service';
 
 interface IncomingCall {
   callId: string;
@@ -14,6 +23,7 @@ export const useCallManager = () => {
   const [activeCall, setActiveCall] = useState<string | null>(null);
   const [activeConversation, setActiveConversation] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [useNativeOverlay, setUseNativeOverlay] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -35,16 +45,34 @@ export const useCallManager = () => {
           const AgeInMinutes = (now.getTime() - scheduledDate.getTime()) / 60000;
 
           if (AgeInMinutes < 2) {
-            setIncomingCall({
+            const callData = {
               callId: latestCall._id,
               scheduledTime: latestCall.scheduledTime,
-            });
+            };
+            setIncomingCall(callData);
+            
+            // Display native overlay if available
+            if (useNativeOverlay) {
+              await displayIncomingCall(callData.callId, 'ANVI');
+            }
           }
         }
 
-        const handleIncomingCall = (data: IncomingCall) => {
+        const handleIncomingCall = async (data: IncomingCall) => {
           if (mounted) {
             setIncomingCall(data);
+            
+            // Display native overlay if available (works even when app is in background)
+            if (useNativeOverlay) {
+              const displayed = await displayIncomingCall(data.callId, 'ANVI');
+              if (displayed) {
+                // Native overlay handles the UI, we still show notification as backup
+                scheduleIncomingCallNotification(data.callId);
+                return; // Don't show React Native modal if native overlay is shown
+              }
+            }
+            
+            // Fallback: Show React Native modal and notification
             scheduleIncomingCallNotification(data.callId);
           }
         };
@@ -69,12 +97,17 @@ export const useCallManager = () => {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [useNativeOverlay]);
 
   const acceptCall = useCallback(async (callId: string) => {
     if (isProcessing) return;
     setIsProcessing(true);
     try {
+      // Answer in native UI if available
+      if (useNativeOverlay) {
+        await answerNativeCall(callId);
+      }
+
       const result = await callService.acceptCall(callId);
       setActiveCall(callId);
       setActiveConversation(result.conversation._id);
@@ -92,12 +125,17 @@ export const useCallManager = () => {
     } finally {
       setIsProcessing(false);
     }
-  }, [isProcessing]);
+  }, [isProcessing, useNativeOverlay]);
 
   const declineCall = useCallback(async (callId: string) => {
     if (isProcessing) return;
     setIsProcessing(true);
     try {
+      // Reject in native UI if available
+      if (useNativeOverlay) {
+        await rejectNativeCall(callId);
+      }
+
       await callService.declineCall(callId);
       setIncomingCall(null);
 
@@ -112,12 +150,17 @@ export const useCallManager = () => {
     } finally {
       setIsProcessing(false);
     }
-  }, [isProcessing]);
+  }, [isProcessing, useNativeOverlay]);
 
   const endCall = useCallback(async (callId: string) => {
     if (isProcessing) return;
     setIsProcessing(true);
     try {
+      // End in native UI if available
+      if (useNativeOverlay) {
+        await endNativeCall(callId);
+      }
+
       await callService.endCall(callId);
       setActiveCall(null);
       setActiveConversation(null);
@@ -127,7 +170,44 @@ export const useCallManager = () => {
     } finally {
       setIsProcessing(false);
     }
-  }, [isProcessing]);
+  }, [isProcessing, useNativeOverlay]);
+
+  // Initialize native call overlay after callbacks are defined
+  useEffect(() => {
+    const initNativeCalls = async () => {
+      const initialized = await initializeCallKeep();
+      setUseNativeOverlay(initialized);
+      
+      if (initialized) {
+        // Set up native call event listeners
+        const cleanup = setupCallKeepListeners({
+          onAnswerCallAction: async (callId: string) => {
+            console.log('Native call answered:', callId);
+            await acceptCall(callId);
+          },
+          onEndCallAction: async (callId: string) => {
+            console.log('Native call ended:', callId);
+            if (activeCall === callId) {
+              await endCall(callId);
+            } else {
+              await declineCall(callId);
+            }
+          },
+          onRejectCallAction: async (callId: string) => {
+            console.log('Native call rejected:', callId);
+            await declineCall(callId);
+          },
+        });
+        
+        return cleanup;
+      }
+    };
+
+    const cleanupPromise = initNativeCalls();
+    return () => {
+      cleanupPromise.then(cleanup => cleanup && cleanup());
+    };
+  }, [acceptCall, declineCall, endCall, activeCall]);
 
   return {
     incomingCall,
@@ -136,5 +216,6 @@ export const useCallManager = () => {
     acceptCall,
     declineCall,
     endCall,
+    useNativeOverlay, // Expose this so UI can conditionally render
   };
 };

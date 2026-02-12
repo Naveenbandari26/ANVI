@@ -12,12 +12,13 @@ export const CallOverlay: React.FC = () => {
         acceptCall,
         declineCall,
         endCall,
+        useNativeOverlay,
     } = useCallManager();
 
     return (
         <View style={styles.container} pointerEvents="box-none">
-            {/* Incoming Call Modal */}
-            {incomingCall && (
+            {/* Incoming Call Modal - Only show if native overlay is not available */}
+            {incomingCall && !useNativeOverlay && (
                 <IncomingCallModal
                     visible={!!incomingCall}
                     callId={incomingCall.callId}
