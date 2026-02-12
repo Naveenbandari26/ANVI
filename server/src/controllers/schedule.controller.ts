@@ -1,22 +1,23 @@
 import { Request, Response, NextFunction } from 'express';
 import { ScheduleModel } from '../models/schedule.schema';
 import { startScheduleCron, stopScheduleCron, calculateNextTrigger } from '../services/schedule.service';
+import { AuthRequest } from '../middleware/authenticate';
 
 /**
  * Get user's schedules
  */
 export async function getUserSchedules(req: Request, res: Response, next: NextFunction) {
   try {
-    const userId = (req as any).user.id;
+    const userId = (req as AuthRequest).userId;
 
     const schedules = await ScheduleModel.find({ userId }).sort({ createdAt: -1 });
 
-    res.json({
+    return res.json({
       success: true,
       data: schedules,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
 
@@ -26,7 +27,7 @@ export async function getUserSchedules(req: Request, res: Response, next: NextFu
 export async function getScheduleById(req: Request, res: Response, next: NextFunction) {
   try {
     const { scheduleId } = req.params;
-    const userId = (req as any).user.id;
+    const userId = (req as AuthRequest).userId;
 
     const schedule = await ScheduleModel.findOne({ _id: scheduleId, userId });
 
@@ -37,12 +38,12 @@ export async function getScheduleById(req: Request, res: Response, next: NextFun
       });
     }
 
-    res.json({
+    return res.json({
       success: true,
       data: schedule,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
 
@@ -51,7 +52,7 @@ export async function getScheduleById(req: Request, res: Response, next: NextFun
  */
 export async function createSchedule(req: Request, res: Response, next: NextFunction) {
   try {
-    const userId = (req as any).user.id;
+    const userId = (req as AuthRequest).userId;
     const { name, time, daysOfWeek, timezone = 'UTC', isActive = true } = req.body;
 
     if (!time || !daysOfWeek || !Array.isArray(daysOfWeek) || daysOfWeek.length === 0) {
@@ -95,12 +96,12 @@ export async function createSchedule(req: Request, res: Response, next: NextFunc
       startScheduleCron(schedule);
     }
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       data: schedule,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
 
@@ -110,7 +111,7 @@ export async function createSchedule(req: Request, res: Response, next: NextFunc
 export async function updateSchedule(req: Request, res: Response, next: NextFunction) {
   try {
     const { scheduleId } = req.params;
-    const userId = (req as any).user.id;
+    const userId = (req as AuthRequest).userId;
     const updates = req.body;
 
     const schedule = await ScheduleModel.findOne({ _id: scheduleId, userId });
@@ -132,7 +133,7 @@ export async function updateSchedule(req: Request, res: Response, next: NextFunc
 
     // Update schedule
     Object.assign(schedule, updates);
-    
+
     // Recalculate next trigger
     schedule.nextTrigger = calculateNextTrigger(schedule);
     await schedule.save();
@@ -144,12 +145,12 @@ export async function updateSchedule(req: Request, res: Response, next: NextFunc
       stopScheduleCron(scheduleId);
     }
 
-    res.json({
+    return res.json({
       success: true,
       data: schedule,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
 
@@ -159,7 +160,7 @@ export async function updateSchedule(req: Request, res: Response, next: NextFunc
 export async function deleteSchedule(req: Request, res: Response, next: NextFunction) {
   try {
     const { scheduleId } = req.params;
-    const userId = (req as any).user.id;
+    const userId = (req as AuthRequest).userId;
 
     const schedule = await ScheduleModel.findOne({ _id: scheduleId, userId });
 
@@ -175,13 +176,11 @@ export async function deleteSchedule(req: Request, res: Response, next: NextFunc
 
     await ScheduleModel.findByIdAndDelete(scheduleId);
 
-    res.json({
+    return res.json({
       success: true,
       message: 'Schedule deleted',
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
-
-

@@ -6,6 +6,7 @@ import {
   updateDiaryEntry,
   deleteDiaryEntry,
 } from '../services/diary.service';
+import { AuthRequest } from '../middleware/authenticate';
 
 /**
  * Get diary entry by ID
@@ -13,7 +14,7 @@ import {
 export async function getDiaryEntryById(req: Request, res: Response, next: NextFunction) {
   try {
     const { diaryId } = req.params;
-    const userId = (req as any).user.id;
+    const userId = (req as AuthRequest).userId;
 
     const diary = await getDiaryEntry(diaryId);
 
@@ -31,12 +32,12 @@ export async function getDiaryEntryById(req: Request, res: Response, next: NextF
       });
     }
 
-    res.json({
+    return res.json({
       success: true,
       data: diary,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
 
@@ -45,17 +46,17 @@ export async function getDiaryEntryById(req: Request, res: Response, next: NextF
  */
 export async function getUserDiaryEntriesHandler(req: Request, res: Response, next: NextFunction) {
   try {
-    const userId = (req as any).user.id;
+    const userId = (req as AuthRequest).userId;
     const { limit = 20, skip = 0 } = req.query;
 
-    const entries = await getUserDiaryEntries(userId, Number(limit), Number(skip));
+    const entries = await getUserDiaryEntries(userId!, Number(limit), Number(skip));
 
-    res.json({
+    return res.json({
       success: true,
       data: entries,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
 
@@ -64,7 +65,7 @@ export async function getUserDiaryEntriesHandler(req: Request, res: Response, ne
  */
 export async function searchDiary(req: Request, res: Response, next: NextFunction) {
   try {
-    const userId = (req as any).user.id;
+    const userId = (req as AuthRequest).userId;
     const { q, limit = 20 } = req.query;
 
     if (!q || typeof q !== 'string') {
@@ -74,14 +75,14 @@ export async function searchDiary(req: Request, res: Response, next: NextFunctio
       });
     }
 
-    const entries = await searchDiaryEntries(userId, q, Number(limit));
+    const entries = await searchDiaryEntries(userId!, q, Number(limit));
 
-    res.json({
+    return res.json({
       success: true,
       data: entries,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
 
@@ -91,7 +92,7 @@ export async function searchDiary(req: Request, res: Response, next: NextFunctio
 export async function updateDiaryEntryHandler(req: Request, res: Response, next: NextFunction) {
   try {
     const { diaryId } = req.params;
-    const userId = (req as any).user.id;
+    const userId = (req as AuthRequest).userId;
     const updates = req.body;
 
     const diary = await getDiaryEntry(diaryId);
@@ -104,12 +105,12 @@ export async function updateDiaryEntryHandler(req: Request, res: Response, next:
 
     const updated = await updateDiaryEntry(diaryId, updates);
 
-    res.json({
+    return res.json({
       success: true,
       data: updated,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
 
@@ -119,7 +120,7 @@ export async function updateDiaryEntryHandler(req: Request, res: Response, next:
 export async function deleteDiaryEntryHandler(req: Request, res: Response, next: NextFunction) {
   try {
     const { diaryId } = req.params;
-    const userId = (req as any).user.id;
+    const userId = (req as AuthRequest).userId;
 
     const diary = await getDiaryEntry(diaryId);
     if (!diary || diary.userId.toString() !== userId) {
@@ -131,13 +132,11 @@ export async function deleteDiaryEntryHandler(req: Request, res: Response, next:
 
     await deleteDiaryEntry(diaryId);
 
-    res.json({
+    return res.json({
       success: true,
       message: 'Diary entry deleted',
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
-
-

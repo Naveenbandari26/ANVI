@@ -13,6 +13,7 @@ export const useCallManager = () => {
   const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
   const [activeCall, setActiveCall] = useState<string | null>(null);
   const [activeConversation, setActiveConversation] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -71,6 +72,8 @@ export const useCallManager = () => {
   }, []);
 
   const acceptCall = useCallback(async (callId: string) => {
+    if (isProcessing) return;
+    setIsProcessing(true);
     try {
       const result = await callService.acceptCall(callId);
       setActiveCall(callId);
@@ -84,12 +87,16 @@ export const useCallManager = () => {
         socket.emit('accept_call', { callId, userId });
       }
     } catch (error) {
-      // Error handled by axios interceptor
+      console.error('Error accepting call:', error);
       throw error;
+    } finally {
+      setIsProcessing(false);
     }
-  }, []);
+  }, [isProcessing]);
 
   const declineCall = useCallback(async (callId: string) => {
+    if (isProcessing) return;
+    setIsProcessing(true);
     try {
       await callService.declineCall(callId);
       setIncomingCall(null);
@@ -100,21 +107,27 @@ export const useCallManager = () => {
         socket.emit('decline_call', { callId, userId });
       }
     } catch (error) {
-      // Error handled by axios interceptor
+      console.error('Error declining call:', error);
       throw error;
+    } finally {
+      setIsProcessing(false);
     }
-  }, []);
+  }, [isProcessing]);
 
   const endCall = useCallback(async (callId: string) => {
+    if (isProcessing) return;
+    setIsProcessing(true);
     try {
       await callService.endCall(callId);
       setActiveCall(null);
       setActiveConversation(null);
     } catch (error) {
-      // Error handled by axios interceptor
+      console.error('Error ending call:', error);
       throw error;
+    } finally {
+      setIsProcessing(false);
     }
-  }, []);
+  }, [isProcessing]);
 
   return {
     incomingCall,
@@ -125,5 +138,3 @@ export const useCallManager = () => {
     endCall,
   };
 };
-
-

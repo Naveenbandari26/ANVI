@@ -7,6 +7,7 @@ import {
   deleteTask,
   getTasksDueSoon,
 } from '../services/task.service';
+import { AuthRequest } from '../middleware/authenticate';
 
 /**
  * Get task by ID
@@ -14,7 +15,7 @@ import {
 export async function getTaskById(req: Request, res: Response, next: NextFunction) {
   try {
     const { taskId } = req.params;
-    const userId = (req as any).user.id;
+    const userId = (req as AuthRequest).userId;
 
     const task = await getTask(taskId);
 
@@ -32,12 +33,12 @@ export async function getTaskById(req: Request, res: Response, next: NextFunctio
       });
     }
 
-    res.json({
+    return res.json({
       success: true,
       data: task,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
 
@@ -46,21 +47,21 @@ export async function getTaskById(req: Request, res: Response, next: NextFunctio
  */
 export async function getUserTasksHandler(req: Request, res: Response, next: NextFunction) {
   try {
-    const userId = (req as any).user.id;
+    const userId = (req as AuthRequest).userId;
     const { status, priority, limit = 50, skip = 0 } = req.query;
 
     const filters: any = {};
     if (status) filters.status = status;
     if (priority) filters.priority = priority;
 
-    const tasks = await getUserTasks(userId, filters, Number(limit), Number(skip));
+    const tasks = await getUserTasks(userId!, filters, Number(limit), Number(skip));
 
-    res.json({
+    return res.json({
       success: true,
       data: tasks,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
 
@@ -69,7 +70,7 @@ export async function getUserTasksHandler(req: Request, res: Response, next: Nex
  */
 export async function createTaskHandler(req: Request, res: Response, next: NextFunction) {
   try {
-    const userId = (req as any).user.id;
+    const userId = (req as AuthRequest).userId;
     const { title, description, priority, dueDate, scheduledTime, tags } = req.body;
 
     if (!title) {
@@ -80,7 +81,7 @@ export async function createTaskHandler(req: Request, res: Response, next: NextF
     }
 
     const task = await createTask({
-      userId,
+      userId: userId!,
       title,
       description,
       priority,
@@ -89,12 +90,12 @@ export async function createTaskHandler(req: Request, res: Response, next: NextF
       tags,
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       data: task,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
 
@@ -104,7 +105,7 @@ export async function createTaskHandler(req: Request, res: Response, next: NextF
 export async function updateTaskHandler(req: Request, res: Response, next: NextFunction) {
   try {
     const { taskId } = req.params;
-    const userId = (req as any).user.id;
+    const userId = (req as AuthRequest).userId;
     const updates = req.body;
 
     const task = await getTask(taskId);
@@ -121,12 +122,12 @@ export async function updateTaskHandler(req: Request, res: Response, next: NextF
 
     const updated = await updateTask(taskId, updates);
 
-    res.json({
+    return res.json({
       success: true,
       data: updated,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
 
@@ -136,7 +137,7 @@ export async function updateTaskHandler(req: Request, res: Response, next: NextF
 export async function deleteTaskHandler(req: Request, res: Response, next: NextFunction) {
   try {
     const { taskId } = req.params;
-    const userId = (req as any).user.id;
+    const userId = (req as AuthRequest).userId;
 
     const task = await getTask(taskId);
     if (!task || task.userId.toString() !== userId) {
@@ -148,12 +149,12 @@ export async function deleteTaskHandler(req: Request, res: Response, next: NextF
 
     await deleteTask(taskId);
 
-    res.json({
+    return res.json({
       success: true,
       message: 'Task deleted',
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
 
@@ -162,17 +163,15 @@ export async function deleteTaskHandler(req: Request, res: Response, next: NextF
  */
 export async function getTasksDueSoonHandler(req: Request, res: Response, next: NextFunction) {
   try {
-    const userId = (req as any).user.id;
+    const userId = (req as AuthRequest).userId;
 
-    const tasks = await getTasksDueSoon(userId);
+    const tasks = await getTasksDueSoon(userId!);
 
-    res.json({
+    return res.json({
       success: true,
       data: tasks,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
-
-

@@ -6,12 +6,15 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import { conversationService } from '../../services/conversation.service';
 import { callService } from '../../services/call.service';
-import { useAudioRecorder } from '../../hooks/useAudioRecorder';
+import { useNativeSTT } from '../../hooks/useNativeSTT';
 import { generateTTS } from '../../services/tts.service';
 
 interface ActiveCallScreenProps {
@@ -25,15 +28,31 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
   conversationId,
   onEndCall,
 }) => {
-  const [isRecording, setIsRecording] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isPlayingTTS, setIsPlayingTTS] = useState(false);
+  const [manualInput, setManualInput] = useState('');
   const scrollViewRef = useRef<ScrollView>(null);
   const soundRef = useRef<Audio.Sound | null>(null);
 
-  const { startRecording, stopRecording, getTranscript } = useAudioRecorder();
+  const handleSpeechResult = async (text: string) => {
+    if (!text || isProcessing) return;
+
+    setIsProcessing(true);
+    setMessages((prev) => [...prev, { role: 'user', content: text }]);
+
+    try {
+      // Send message to backend and get AI response
+      await conversationService.sendMessage(conversationId, text);
+    } catch (error) {
+      console.error('Error sending speech result:', error);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const { isListening, partialResult, error: sttError, startListening, stopListening } = useNativeSTT(handleSpeechResult);
 
   // Clean up audio on unmount
   useEffect(() => {
@@ -92,6 +111,9 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
             setIsPlayingTTS(false);
             sound.unloadAsync().catch(() => { });
             soundRef.current = null;
+
+            // AUTOMATICALLY start listening after AI finishes speaking
+            startListening();
           }
         }
       });
@@ -138,68 +160,53 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
         setIsPlayingTTS(false);
       }
 
-      await startRecording();
-      setIsRecording(true);
+      await startListening();
     } catch (error) {
-      // Error handled silently - recording may not be available
+      console.error('Error starting native STT:', error);
     }
   };
 
   const handleStopRecording = async () => {
     try {
-      setIsRecording(false);
-      setIsProcessing(true);
-
-      const audioUri = await stopRecording();
-      const userTranscript = await getTranscript(audioUri);
-
-      if (userTranscript) {
-        // Update local transcript
-        setTranscript((prev) => prev + userTranscript + ' ');
-        setMessages((prev) => [...prev, { role: 'user', content: userTranscript }]);
-
-        // Send to backend
-        await conversationService.processTranscript(conversationId, userTranscript);
-        await conversationService.sendMessage(conversationId, userTranscript);
-      }
-
-      setIsProcessing(false);
-
-      // Switch audio mode back to allow playback
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-      });
+      await stopListening();
     } catch (error) {
-      // Error handled silently
-      setIsProcessing(false);
+      console.error('Error stopping native STT:', error);
     }
   };
 
   const handleEndCall = async () => {
     try {
-      // Stop recording if active
-      if (isRecording) {
-        await stopRecording();
+      // Stop listening if active
+      if (isListening) {
+        await stopListening().catch(() => { });
       }
 
       // Stop TTS playback if active
       if (soundRef.current) {
-        await soundRef.current.unloadAsync();
+        await soundRef.current.unloadAsync().catch(() => { });
         soundRef.current = null;
         setIsPlayingTTS(false);
       }
 
-      await callService.endCall(callId);
-      onEndCall();
+      await onEndCall();
     } catch (error) {
-      // Error handled by axios interceptor - call ended anyway
+      // Handle or ignore cleanup errors
+      onEndCall();
     }
   };
 
+  const handleManualSubmit = () => {
+    if (!manualInput.trim()) return;
+    const text = manualInput;
+    setManualInput('');
+    handleSpeechResult(text);
+  };
+
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
       <View style={styles.header}>
         <Text style={styles.name}>ANVI</Text>
         <Text style={styles.status}>Call in progress</Text>
@@ -236,29 +243,61 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
       </ScrollView>
 
       <View style={styles.controls}>
-        <TouchableOpacity
-          style={[
-            styles.recordButton,
-            isRecording && styles.recordButtonActive,
-          ]}
-          onPress={isRecording ? handleStopRecording : handleStartRecording}
-          disabled={isProcessing}
-        >
-          <Ionicons
-            name={isRecording ? 'stop' : 'mic'}
-            size={32}
-            color="#fff"
-          />
-        </TouchableOpacity>
+        {sttError ? (
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorText}>{sttError}</Text>
+          </View>
+        ) : partialResult ? (
+          <View style={styles.partialResultContainer}>
+            <Text style={styles.partialResultText}>{partialResult}</Text>
+          </View>
+        ) : null}
 
-        <TouchableOpacity
-          style={styles.endCallButton}
-          onPress={handleEndCall}
-        >
-          <Ionicons name="call" size={24} color="#fff" />
-        </TouchableOpacity>
+        {sttError ? (
+          <View style={styles.manualInputContainer}>
+            <TextInput
+              style={styles.manualInput}
+              value={manualInput}
+              onChangeText={setManualInput}
+              placeholder="Type in Telugu to test..."
+              placeholderTextColor="#94a3b8"
+              onSubmitEditing={handleManualSubmit}
+              returnKeyType="send"
+            />
+            <TouchableOpacity
+              style={styles.sendButton}
+              onPress={handleManualSubmit}
+            >
+              <Ionicons name="send" size={20} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        <View style={styles.buttonRow}>
+          <TouchableOpacity
+            style={[
+              styles.recordButton,
+              isListening && styles.recordButtonActive,
+            ]}
+            onPress={isListening ? handleStopRecording : handleStartRecording}
+            disabled={isProcessing}
+          >
+            <Ionicons
+              name={isListening ? 'stop' : 'mic'}
+              size={32}
+              color="#fff"
+            />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.endCallButton}
+            onPress={handleEndCall}
+          >
+            <Ionicons name="call" size={24} color="#fff" />
+          </TouchableOpacity>
+        </View>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 };
 
@@ -312,7 +351,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   controls: {
-    flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 30,
@@ -320,6 +358,59 @@ const styles = StyleSheet.create({
     gap: 20,
     borderTopWidth: 1,
     borderTopColor: '#1e293b',
+    flexDirection: 'column', // Stack partial result and buttons
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 20,
+    width: '100%',
+  },
+  partialResultContainer: {
+    width: '100%',
+    paddingHorizontal: 20,
+    marginBottom: 10,
+    alignItems: 'center',
+  },
+  partialResultText: {
+    color: '#94a3b8',
+    fontSize: 14,
+    fontStyle: 'italic',
+    textAlign: 'center',
+  },
+  errorContainer: {
+    width: '100%',
+    paddingHorizontal: 20,
+    marginBottom: 10,
+    alignItems: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    borderRadius: 8,
+    padding: 8,
+  },
+  errorText: {
+    color: '#ef4444',
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  manualInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1e293b',
+    borderRadius: 25,
+    paddingHorizontal: 15,
+    paddingVertical: 5,
+    marginBottom: 10,
+    width: '100%',
+  },
+  manualInput: {
+    flex: 1,
+    color: '#fff',
+    height: 40,
+    fontSize: 14,
+  },
+  sendButton: {
+    padding: 8,
   },
   recordButton: {
     width: 70,

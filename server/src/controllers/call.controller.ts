@@ -135,11 +135,19 @@ export async function declineCall(req: AuthRequest, res: Response, next: NextFun
       });
     }
 
+    // Robustness: If already declined or completed, just return success
+    if (call.status === 'declined' || call.status === 'completed') {
+      return res.json({
+        success: true,
+        data: call,
+      });
+    }
+
     call.status = 'declined';
     call.endedAt = new Date();
     await call.save();
 
-    res.json({
+    return res.json({
       success: true,
       data: call,
     });
@@ -213,33 +221,50 @@ export async function endCall(req: AuthRequest, res: Response, next: NextFunctio
       });
     }
 
-    if (call.status !== 'accepted') {
-      return res.status(400).json({
-        success: false,
-        message: 'Call is not active',
+    // Robustness: Handle multi-status ending
+    // If it's already ended, just return success
+    if (call.status === 'completed' || call.status === 'declined') {
+      return res.json({
+        success: true,
+        data: call,
       });
     }
 
-    // Finalize conversation
-    if (call.conversationId) {
-      await finalizeConversation(call.conversationId.toString());
-
-      // Create diary entry
-      await createDiaryFromConversation(call.conversationId.toString());
-
-      // Create tasks
-      await createTasksFromConversation(call.conversationId.toString());
+    // Allow ending from 'accepted' or 'ringing' (treat ringing-end as decline/completed)
+    if (call.status !== 'accepted' && call.status !== 'ringing') {
+      return res.status(400).json({
+        success: false,
+        message: `Call cannot be ended from status: ${call.status}`,
+      });
     }
 
-    // Update call
+    // Set status to completed regardless of coming from ringing or accepted
+    const wasAccepted = call.status === 'accepted';
     call.status = 'completed';
     call.endedAt = new Date();
+
     if (call.startedAt) {
       call.duration = Math.floor((call.endedAt.getTime() - call.startedAt.getTime()) / 1000);
     }
+
+    // Finalize conversation only if it was accepted and has an ID
+    if (wasAccepted && call.conversationId) {
+      // Since it's populated, conversationId is the document. We need its string ID.
+      const convIdStr = (call.conversationId as any)._id.toString();
+
+      try {
+        await finalizeConversation(convIdStr);
+        await createDiaryFromConversation(convIdStr);
+        await createTasksFromConversation(convIdStr);
+      } catch (convError) {
+        console.error('Error finalising conversation details on endCall:', convError);
+        // We still save the call status even if analysis fails
+      }
+    }
+
     await call.save();
 
-    res.json({
+    return res.json({
       success: true,
       data: call,
     });
@@ -247,5 +272,3 @@ export async function endCall(req: AuthRequest, res: Response, next: NextFunctio
     next(error);
   }
 }
-
-

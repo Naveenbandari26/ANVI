@@ -50,7 +50,14 @@
           }
         }
       ],
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "@react-native-voice/voice",
+        {
+          "microphonePermission": "Allow ANVI to listen to your voice.",
+          "speechRecognitionPermission": "Allow ANVI to process your speech."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

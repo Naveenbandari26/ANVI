@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -17,15 +17,37 @@ Keep your responses conversational, brief (2-3 sentences typically), and emotion
 IMPORTANT: Always respond in Telugu language. Write all your responses in Telugu script.`;
 
 /**
- * Robust model selection with fallback
+ * Safety settings to prevent false positives with Telugu script
+ */
+const safetySettings = [
+  {
+    category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+    threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+  },
+  {
+    category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+    threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+  },
+  {
+    category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+    threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+  },
+  {
+    category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+    threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+  },
+];
+
+/**
+ * Robust model selection.
+ * We switch to gemini-2.0-flash because the current API Key / Project 
+ * doesn't seem to have access to 1.5-flash (returns 404).
  */
 function getModel() {
-  // We try standard model names without explicit apiVersion to let the SDK decide
-  try {
-    return genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-  } catch (e) {
-    return genAI.getGenerativeModel({ model: 'gemini-pro' });
-  }
+  // Using gemini-2.0-flash as it's confirmed available via ListModels
+  return genAI.getGenerativeModel({
+    model: 'gemini-2.0-flash',
+  }, { apiVersion: 'v1' });
 }
 
 export interface ConversationContext {
@@ -77,12 +99,39 @@ ${conversationHistory}
 User: ${userMessage}
 ANVI:`;
 
-    const result = await model.generateContent(prompt);
-    const response = result.response;
-    return response.text().trim();
-  } catch (error) {
-    console.error('Error generating Gemini response:', error);
-    throw new Error('Failed to generate AI response');
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      safetySettings
+    });
+
+    const text = result.response.text();
+
+    if (!text) {
+      throw new Error('Empty response from Gemini');
+    }
+
+    return text.trim();
+  } catch (error: any) {
+    console.error('❌ Gemini API Error:', {
+      message: error.message,
+      status: error.status,
+      details: error.response?.data || error.details || 'Check your API Key and Network.'
+    });
+
+    // Check for common error types
+    if (error.message?.includes('API_KEY_INVALID')) {
+      throw new Error('INVALID_API_KEY: Please verify your GEMINI_API_KEY in the .env file.');
+    }
+
+    if (error.message?.includes('SAFETY')) {
+      return "క్షమించండి, ఆ విషయాన్ని నేను చర్చించలేను. మనం వేరే దాని గురించి మాట్లాడుకుందామా?";
+    }
+
+    if (error.message?.includes('429') || error.message?.includes('quota')) {
+      return "క్షమించండి, సర్వర్ లో కాస్త రద్దీగా ఉంది. ఒక్క నిమిషం ఆగి మళ్ళీ ప్రయత్నిస్తాను. (Sorry, server is a bit busy. I'll try again in a minute.)";
+    }
+
+    throw new Error(`Gemini Error: ${error.message}`);
   }
 }
 

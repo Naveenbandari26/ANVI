@@ -5,6 +5,7 @@ import {
   addMessageAndRespond,
   processTranscriptChunk,
 } from '../services/conversation.service';
+import { AuthRequest } from '../middleware/authenticate';
 
 /**
  * Get conversation by ID
@@ -12,7 +13,7 @@ import {
 export async function getConversationById(req: Request, res: Response, next: NextFunction) {
   try {
     const { conversationId } = req.params;
-    const userId = (req as any).user.id;
+    const userId = (req as AuthRequest).userId;
 
     const conversation = await getConversation(conversationId);
 
@@ -30,12 +31,12 @@ export async function getConversationById(req: Request, res: Response, next: Nex
       });
     }
 
-    res.json({
+    return res.json({
       success: true,
       data: conversation,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
 
@@ -44,21 +45,21 @@ export async function getConversationById(req: Request, res: Response, next: Nex
  */
 export async function getUserConversationsHandler(req: Request, res: Response, next: NextFunction) {
   try {
-    const userId = (req as any).user.id;
+    const userId = (req as AuthRequest).userId;
     const { limit = 20, skip = 0 } = req.query;
 
     const conversations = await getUserConversations(
-      userId,
+      userId!,
       Number(limit),
       Number(skip)
     );
 
-    res.json({
+    return res.json({
       success: true,
       data: conversations,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
 
@@ -69,7 +70,7 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
   try {
     const { conversationId } = req.params;
     const { message } = req.body;
-    const userId = (req as any).user.id;
+    const userId = (req as AuthRequest).userId;
 
     if (!message || typeof message !== 'string') {
       return res.status(400).json({
@@ -88,12 +89,12 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
 
     const result = await addMessageAndRespond(conversationId, message);
 
-    res.json({
+    return res.json({
       success: true,
       data: result,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
 
@@ -104,7 +105,7 @@ export async function processTranscript(req: Request, res: Response, next: NextF
   try {
     const { conversationId } = req.params;
     const { transcript } = req.body;
-    const userId = (req as any).user.id;
+    const userId = (req as AuthRequest).userId;
 
     if (!transcript || typeof transcript !== 'string') {
       return res.status(400).json({
@@ -123,13 +124,11 @@ export async function processTranscript(req: Request, res: Response, next: NextF
 
     await processTranscriptChunk(conversationId, transcript);
 
-    res.json({
+    return res.json({
       success: true,
       message: 'Transcript processed',
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
-
-
