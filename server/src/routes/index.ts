@@ -6,7 +6,6 @@ import conversationRoutes from './conversation.routes';
 import diaryRoutes from './diary.routes';
 import taskRoutes from './task.routes';
 import scheduleRoutes from './schedule.routes';
-import sttRoutes from './stt.routes';
 import ttsRoutes from './tts.routes';
 
 const router = Router();
@@ -22,7 +21,6 @@ router.use(`/${API_VERSION}/conversations`, conversationRoutes);
 router.use(`/${API_VERSION}/diary`, diaryRoutes);
 router.use(`/${API_VERSION}/tasks`, taskRoutes);
 router.use(`/${API_VERSION}/schedules`, scheduleRoutes);
-router.use(`/${API_VERSION}/stt`, sttRoutes);
 router.use(`/${API_VERSION}/tts`, ttsRoutes);
 
 // Debug: Log route registration
@@ -42,7 +40,6 @@ router.get('/', (req, res) => {
       diary: `/api/${API_VERSION}/diary`,
       tasks: `/api/${API_VERSION}/tasks`,
       schedules: `/api/${API_VERSION}/schedules`,
-      stt: `/api/${API_VERSION}/stt`,
       tts: `/api/${API_VERSION}/tts`,
     },
     testAuth: {

@@ -9,6 +9,7 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
@@ -33,10 +34,20 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [isPlayingTTS, setIsPlayingTTS] = useState(false);
   const [manualInput, setManualInput] = useState('');
+  const [hasReceivedInitialGreeting, setHasReceivedInitialGreeting] = useState(false);
+  const [isEndingCall, setIsEndingCall] = useState(false);
+  const [endingStep, setEndingStep] = useState<string>('');
   const scrollViewRef = useRef<ScrollView>(null);
   const soundRef = useRef<Audio.Sound | null>(null);
+  const hasReceivedGreetingRef = useRef(false); // Track greeting to avoid re-triggering
 
   const handleSpeechResult = async (text: string) => {
+    // Prevent sending messages until initial greeting is received
+    if (!hasReceivedInitialGreeting) {
+      console.log('⏳ Waiting for initial greeting before accepting user input');
+      return;
+    }
+    
     if (!text || isProcessing) return;
 
     setIsProcessing(true);
@@ -65,7 +76,7 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
   }, []);
 
   // Play TTS audio
-  const playTTSAudio = async (text: string, audioData?: string) => {
+  const playTTSAudio = async (text: string, audioData?: string, isInitialGreeting: boolean = false) => {
     try {
       setIsPlayingTTS(true);
 
@@ -112,8 +123,11 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
             sound.unloadAsync().catch(() => { });
             soundRef.current = null;
 
-            // AUTOMATICALLY start listening after AI finishes speaking
-            startListening();
+            // Only start listening automatically after greeting is received
+            // This ensures user can only respond after hearing the greeting
+            if (hasReceivedInitialGreeting) {
+              startListening();
+            }
           }
         }
       });
@@ -127,30 +141,97 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
   useEffect(() => {
     // Listen for AI responses (including initial greeting)
     const handleAIResponse = async (data: { conversationId: string; message: string; audio?: string }) => {
-      if (data.conversationId === conversationId) {
+      console.log('📥 Received AI response:', {
+        receivedConversationId: data.conversationId,
+        currentConversationId: conversationId,
+        match: data.conversationId === conversationId,
+        message: data.message.substring(0, 50),
+        hasAudio: !!data.audio,
+      });
+      
+      // Convert both to strings for comparison (in case one is ObjectId)
+      const receivedId = String(data.conversationId);
+      const currentId = String(conversationId);
+      
+      if (receivedId === currentId) {
+        console.log('✅ Conversation IDs match, adding message to UI');
+        
+        // Check if this is the first assistant message (initial greeting)
+        const isFirstAssistantMessage = messages.length === 0 || 
+          !messages.some(msg => msg.role === 'assistant');
+        
         setMessages((prev) => {
+          // Check for existing message with same content (for audio updates)
+          const existingIndex = prev.findIndex(
+            (msg) => msg.role === 'assistant' && msg.content === data.message
+          );
+          
+          if (existingIndex >= 0) {
+            // Update existing message (e.g., add audio)
+            console.log('🔄 Updating existing message with audio');
+            const updated = [...prev];
+            // Message already exists, just update if needed
+            return prev;
+          }
+          
           // Avoid duplicate messages
           const isDuplicate = prev.some(
             (msg) => msg.role === 'assistant' && msg.content === data.message
           );
-          if (isDuplicate) return prev;
+          if (isDuplicate) {
+            console.log('⚠️ Duplicate message detected, skipping');
+            return prev;
+          }
+          console.log('✅ Adding new assistant message:', data.message.substring(0, 50));
           return [...prev, { role: 'assistant', content: data.message }];
         });
         setIsProcessing(false);
 
+        // If this is the initial greeting, mark it as received
+        if (isFirstAssistantMessage && !hasReceivedGreetingRef.current) {
+          console.log('🎉 Initial greeting received! Enabling user input.');
+          setHasReceivedInitialGreeting(true);
+          hasReceivedGreetingRef.current = true;
+        }
+
         // Play AI response as Telugu TTS audio (prioritizing server-provided audio)
-        await playTTSAudio(data.message, data.audio);
+        // Only play if audio is provided (for initial greeting, play immediately even without audio)
+        if (data.audio || isFirstAssistantMessage) {
+          await playTTSAudio(data.message, data.audio, isFirstAssistantMessage);
+        }
+      } else {
+        console.log('❌ Conversation ID mismatch - ignoring response');
+      }
+    };
+
+    // Listen for audio updates for existing messages
+    const handleAudioUpdate = async (data: { conversationId: string; message: string; audio: string }) => {
+      const receivedId = String(data.conversationId);
+      const currentId = String(conversationId);
+      
+      if (receivedId === currentId) {
+        console.log('📥 Received audio update for message:', data.message.substring(0, 50));
+        // Play the audio update
+        await playTTSAudio(data.message, data.audio, false);
       }
     };
 
     conversationService.onAIResponse(handleAIResponse);
+    conversationService.onAudioUpdate?.(handleAudioUpdate);
 
     return () => {
       conversationService.offAIResponse(handleAIResponse);
+      conversationService.offAudioUpdate?.(handleAudioUpdate);
     };
-  }, [conversationId]);
+  }, [conversationId, messages.length]);
 
   const handleStartRecording = async () => {
+    // Prevent starting recording until initial greeting is received
+    if (!hasReceivedInitialGreeting) {
+      console.log('⏳ Waiting for initial greeting before allowing recording');
+      return;
+    }
+
     try {
       // Stop any playing TTS audio before recording
       if (soundRef.current) {
@@ -188,14 +269,47 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
         setIsPlayingTTS(false);
       }
 
-      await onEndCall();
+      // Show loading modal with progress steps
+      setIsEndingCall(true);
+      setEndingStep('Finalizing conversation...');
+
+      // Call the end call API - backend will handle the processing
+      await callService.endCall(callId);
+
+      // Simulate progress steps (backend does these sequentially)
+      // Step 1: Finalizing conversation
+      setEndingStep('Finalizing conversation...');
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      // Step 2: Creating diary entry
+      setEndingStep('Creating diary entry...');
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      // Step 3: Analyzing tasks
+      setEndingStep('Analyzing tasks...');
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      // Close modal and call the parent's onEndCall
+      setIsEndingCall(false);
+      setEndingStep('');
+      onEndCall();
     } catch (error) {
-      // Handle or ignore cleanup errors
+      console.error('Error ending call:', error);
+      // Close modal even on error
+      setIsEndingCall(false);
+      setEndingStep('');
+      // Still call onEndCall to close the screen
       onEndCall();
     }
   };
 
   const handleManualSubmit = () => {
+    // Prevent manual input until initial greeting is received
+    if (!hasReceivedInitialGreeting) {
+      console.log('⏳ Waiting for initial greeting before accepting manual input');
+      return;
+    }
+    
     if (!manualInput.trim()) return;
     const text = manualInput;
     setManualInput('');
@@ -203,10 +317,11 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
       <View style={styles.header}>
         <Text style={styles.name}>ANVI</Text>
         <Text style={styles.status}>Call in progress</Text>
@@ -228,6 +343,12 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
             <Text style={styles.messageText}>{msg.content}</Text>
           </View>
         ))}
+        {!hasReceivedInitialGreeting && messages.length === 0 && (
+          <View style={[styles.message, styles.assistantMessage]}>
+            <ActivityIndicator size="small" color="#6366f1" />
+            <Text style={styles.messageText}>Waiting for ANVI...</Text>
+          </View>
+        )}
         {isProcessing && (
           <View style={[styles.message, styles.assistantMessage]}>
             <ActivityIndicator size="small" color="#6366f1" />
@@ -256,19 +377,27 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
         {sttError ? (
           <View style={styles.manualInputContainer}>
             <TextInput
-              style={styles.manualInput}
+              style={[
+                styles.manualInput,
+                !hasReceivedInitialGreeting && styles.manualInputDisabled
+              ]}
               value={manualInput}
               onChangeText={setManualInput}
-              placeholder="Type in Telugu to test..."
+              placeholder={hasReceivedInitialGreeting ? "Type in Telugu to test..." : "Waiting for greeting..."}
               placeholderTextColor="#94a3b8"
               onSubmitEditing={handleManualSubmit}
               returnKeyType="send"
+              editable={hasReceivedInitialGreeting}
             />
             <TouchableOpacity
-              style={styles.sendButton}
+              style={[
+                styles.sendButton,
+                !hasReceivedInitialGreeting && styles.sendButtonDisabled
+              ]}
               onPress={handleManualSubmit}
+              disabled={!hasReceivedInitialGreeting}
             >
-              <Ionicons name="send" size={20} color="#fff" />
+              <Ionicons name="send" size={20} color={hasReceivedInitialGreeting ? "#fff" : "#666"} />
             </TouchableOpacity>
           </View>
         ) : null}
@@ -278,14 +407,15 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
             style={[
               styles.recordButton,
               isListening && styles.recordButtonActive,
+              !hasReceivedInitialGreeting && styles.recordButtonDisabled,
             ]}
             onPress={isListening ? handleStopRecording : handleStartRecording}
-            disabled={isProcessing}
+            disabled={isProcessing || !hasReceivedInitialGreeting}
           >
             <Ionicons
               name={isListening ? 'stop' : 'mic'}
               size={32}
-              color="#fff"
+              color={hasReceivedInitialGreeting ? "#fff" : "#666"}
             />
           </TouchableOpacity>
 
@@ -298,6 +428,23 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
         </View>
       </View>
     </KeyboardAvoidingView>
+
+    {/* Call Ending Progress Modal */}
+    <Modal
+      visible={isEndingCall}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <ActivityIndicator size="large" color="#6366f1" />
+          <Text style={styles.modalTitle}>Ending Call</Text>
+          <Text style={styles.modalStep}>{endingStep}</Text>
+        </View>
+      </View>
+    </Modal>
+    </>
   );
 };
 
@@ -409,8 +556,14 @@ const styles = StyleSheet.create({
     height: 40,
     fontSize: 14,
   },
+  manualInputDisabled: {
+    opacity: 0.5,
+  },
   sendButton: {
     padding: 8,
+  },
+  sendButtonDisabled: {
+    opacity: 0.5,
   },
   recordButton: {
     width: 70,
@@ -423,6 +576,10 @@ const styles = StyleSheet.create({
   recordButtonActive: {
     backgroundColor: '#ef4444',
   },
+  recordButtonDisabled: {
+    backgroundColor: '#374151',
+    opacity: 0.5,
+  },
   endCallButton: {
     width: 50,
     height: 50,
@@ -431,6 +588,30 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#1e293b',
+    borderRadius: 20,
+    padding: 32,
+    alignItems: 'center',
+    minWidth: 280,
+    maxWidth: '80%',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginTop: 20,
+    marginBottom: 12,
+  },
+  modalStep: {
+    fontSize: 16,
+    color: '#94a3b8',
+    textAlign: 'center',
+  },
 });
-
-

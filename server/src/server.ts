@@ -10,7 +10,6 @@ import { notFoundHandler } from './middleware/notFoundHandler';
 import { connectDatabase } from './config/database';
 import { initializeSocket } from './config/socket';
 import { initializeSchedules } from './services/schedule.service';
-import { initializeVoskModel } from './services/vosk.service';
 import { initializeTTSService } from './services/tts.service';
 import apiRoutes from './routes';
 
@@ -29,10 +28,13 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 // Security middleware
 app.use(helmet());
 
-// CORS configuration
+// CORS: in development allow any origin so React Native (Expo) on LAN can connect
+const corsOrigin = NODE_ENV === 'development'
+  ? true
+  : (process.env.CORS_ORIGIN || 'http://localhost:8081');
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN || 'http://localhost:8081',
+    origin: corsOrigin,
     credentials: true,
   })
 );
@@ -86,13 +88,6 @@ const startServer = async (): Promise<void> => {
     // Connect to MongoDB
     await connectDatabase();
 
-    // Initialize Vosk HTTP API connection (non-blocking)
-    initializeVoskModel().catch((error) => {
-      console.warn('⚠️  Vosk HTTP API connection failed:', error.message);
-      console.warn('📝 Make sure Vosk Docker container is running');
-      console.warn('   Run: docker-compose -f docker-compose.vosk.yml up -d');
-    });
-
     // Initialize TTS service connection (non-blocking)
     initializeTTSService().catch((error) => {
       console.warn('⚠️  Telugu TTS service connection failed:', error.message);
@@ -103,11 +98,12 @@ const startServer = async (): Promise<void> => {
     // Initialize scheduled calls
     await initializeSchedules();
 
-    // Start HTTP server with Socket.io
-    httpServer.listen(PORT, () => {
+    // Bind to 0.0.0.0 so React Native on same LAN (e.g. 192.168.1.58) can connect
+    httpServer.listen(PORT, '0.0.0.0', () => {
       console.log(`🚀 Server is running on port ${PORT}`);
       console.log(`📝 Environment: ${NODE_ENV}`);
-      console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+      console.log(`🔗 Local:   http://localhost:${PORT}/health`);
+      console.log(`🔗 LAN:     http://0.0.0.0:${PORT} (use your PC's IP, e.g. http://192.168.1.x:${PORT})`);
       console.log(`🔌 WebSocket server initialized`);
     });
   } catch (error) {

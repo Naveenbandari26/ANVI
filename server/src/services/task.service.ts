@@ -1,6 +1,6 @@
 import { TaskModel, ITask } from '../models/task.schema';
 import { ConversationModel } from '../models/conversation.schema';
-import { extractTasks } from './gemini.service';
+import { extractTasks } from './phi3.service';
 
 /**
  * Create tasks from conversation

@@ -247,14 +247,17 @@ export async function endCall(req: AuthRequest, res: Response, next: NextFunctio
       call.duration = Math.floor((call.endedAt.getTime() - call.startedAt.getTime()) / 1000);
     }
 
-    // Finalize conversation only if it was accepted and has an ID
+    // Finalize conversation only if it was accepted and has an ID.
+    // Run Gemini calls sequentially with spacing to avoid 429 rate limits.
     if (wasAccepted && call.conversationId) {
-      // Since it's populated, conversationId is the document. We need its string ID.
       const convIdStr = (call.conversationId as any)._id.toString();
+      const delayMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
       try {
         await finalizeConversation(convIdStr);
+        await delayMs(1200);
         await createDiaryFromConversation(convIdStr);
+        await delayMs(1200);
         await createTasksFromConversation(convIdStr);
       } catch (convError) {
         console.error('Error finalising conversation details on endCall:', convError);

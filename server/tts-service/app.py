@@ -28,6 +28,15 @@ model = None
 tokenizer = None
 description_tokenizer = None
 
+# Cache for common phrases (LRU cache)
+from functools import lru_cache
+import hashlib
+import base64
+
+# Cache dictionary for audio results
+_audio_cache = {}
+MAX_CACHE_SIZE = 50  # Cache up to 50 unique phrases
+
 # Telugu speaker descriptions
 TELUGU_SPEAKERS = {
     "prakash": "Prakash speaks Telugu in a confident, neutral tone with moderate speed and pitch. The audio is very clear and close-sounding with excellent recording quality.",
@@ -81,6 +90,22 @@ def load_model():
             token=hf_token
         ).to(DEVICE)
         
+        # OPTIMIZATION: Use FP16 (half precision) for 2x speed improvement
+        if DEVICE == "cuda":
+            try:
+                model = model.half()  # Convert to FP16
+                print("✅ Model converted to FP16 (faster inference)")
+            except Exception as e:
+                print(f"⚠️  Could not convert to FP16: {e}")
+        
+        # OPTIMIZATION: Torch compile for PyTorch 2.0+ (1.5-2x faster)
+        try:
+            if hasattr(torch, 'compile') and DEVICE == "cuda":
+                model = torch.compile(model, mode='reduce-overhead')
+                print("✅ Model compiled with torch.compile (faster inference)")
+        except Exception as e:
+            print(f"⚠️  Torch compile not available: {e}")
+        
         tokenizer = AutoTokenizer.from_pretrained(
             MODEL_NAME,
             token=hf_token
@@ -92,6 +117,13 @@ def load_model():
         )
         
         print(f"✅ Model loaded successfully on {DEVICE}")
+        
+        # Warm up model with a dummy generation
+        try:
+            warmup_model()
+        except Exception as e:
+            print(f"⚠️  Model warmup failed: {e}")
+        
         return True
     except Exception as e:
         error_msg = str(e)
@@ -108,17 +140,32 @@ def load_model():
             print(f"❌ Error loading model: {error_msg}")
         return False
 
-def generate_telugu_tts(text: str, description: str) -> tuple[str, int]:
+def get_cache_key(text: str, description: str) -> str:
+    """Generate cache key for text and description"""
+    return hashlib.md5(f"{text}:{description}".encode()).hexdigest()
+
+def generate_telugu_tts(text: str, description: str, use_cache: bool = True) -> tuple[str, int]:
     """
-    Generate Telugu audio from text
+    Generate Telugu audio from text (with caching optimization)
     
     Args:
         text: Telugu text in native script (UTF-8)
         description: Voice description for the speaker
+        use_cache: Whether to use cache (default: True)
         
     Returns:
         tuple: (audio_file_path, sampling_rate)
     """
+    # OPTIMIZATION: Check cache first
+    if use_cache:
+        cache_key = get_cache_key(text, description)
+        if cache_key in _audio_cache:
+            cached_path, cached_sr = _audio_cache[cache_key]
+            # Verify file still exists
+            if os.path.exists(cached_path):
+                print(f"✅ Using cached audio for: {text[:30]}...")
+                return cached_path, cached_sr
+    
     try:
         # Tokenize description
         desc_inputs = description_tokenizer(
@@ -130,17 +177,24 @@ def generate_telugu_tts(text: str, description: str) -> tuple[str, int]:
             text, return_tensors="pt"
         ).to(DEVICE)
         
-        # Generate audio
+        # OPTIMIZATION: Optimized generation parameters for faster inference
         with torch.no_grad():
             audio = model.generate(
                 input_ids=desc_inputs.input_ids,
                 attention_mask=desc_inputs.attention_mask,
                 prompt_input_ids=text_inputs.input_ids,
                 prompt_attention_mask=text_inputs.attention_mask,
+                max_new_tokens=512,  # Limit max tokens
+                do_sample=False,  # Disable sampling (faster, deterministic)
+                num_beams=1,  # Single beam (faster than beam search)
             )
         
-        # Convert to numpy array
-        audio_arr = audio.cpu().numpy().squeeze()
+        # Convert to numpy array (optimize device transfer)
+        if DEVICE == "cuda":
+            audio_arr = audio.cpu().numpy().squeeze()
+        else:
+            audio_arr = audio.numpy().squeeze()
+        
         sampling_rate = model.config.sampling_rate
         
         # Generate unique filename
@@ -153,10 +207,38 @@ def generate_telugu_tts(text: str, description: str) -> tuple[str, int]:
         # Save audio file
         sf.write(filepath, audio_arr, sampling_rate)
         
+        # OPTIMIZATION: Cache the result
+        if use_cache:
+            cache_key = get_cache_key(text, description)
+            # Limit cache size
+            if len(_audio_cache) >= MAX_CACHE_SIZE:
+                # Remove oldest entry (simple FIFO)
+                oldest_key = next(iter(_audio_cache))
+                try:
+                    old_path = _audio_cache[oldest_key][0]
+                    if os.path.exists(old_path):
+                        os.remove(old_path)
+                except:
+                    pass
+                del _audio_cache[oldest_key]
+            
+            _audio_cache[cache_key] = (filepath, sampling_rate)
+        
         return filepath, sampling_rate
         
     except Exception as e:
         raise Exception(f"Error generating audio: {str(e)}")
+
+def warmup_model():
+    """Warm up the model with a dummy generation for faster first request"""
+    try:
+        dummy_text = "హలో"
+        dummy_desc = TELUGU_SPEAKERS["lalitha"]
+        print("🔥 Warming up model...")
+        generate_telugu_tts(dummy_text, dummy_desc, use_cache=False)
+        print("✅ Model warmed up successfully")
+    except Exception as e:
+        print(f"⚠️  Model warmup failed: {e}")
 
 @app.route('/health', methods=['GET'])
 def health_check():

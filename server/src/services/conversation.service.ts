@@ -1,8 +1,9 @@
 import { ConversationModel, IConversation } from '../models/conversation.schema';
 import { CallModel } from '../models/call.schema';
-import { generateResponse, analyzeConversation, ConversationContext } from './gemini.service';
-import { extractTasks } from './gemini.service';
+import { generateResponse, analyzeConversation, ConversationContext } from './phi3.service';
+import { extractTasks } from './phi3.service';
 import { generateTeluguSpeech } from './tts.service';
+import { translateTeluguToEnglish, translateEnglishToTelugu } from './translation.service';
 import { io } from '../config/socket';
 import { UserModel } from '../models/user.schema';
 import { TaskModel } from '../models/task.schema';
@@ -31,6 +32,7 @@ export async function createConversation(
 
 /**
  * Send initial greeting when call starts
+ * Optimized to send greeting immediately, TTS generated asynchronously
  */
 export async function sendInitialGreeting(
   conversationId: string
@@ -41,8 +43,8 @@ export async function sendInitialGreeting(
       throw new Error('Conversation not found');
     }
 
-    // Get user info
-    const user = await UserModel.findById(conversation.userId).select('name');
+    // Get user info (optimize query - only fetch name field, use lean for faster response)
+    const user = await UserModel.findById(conversation.userId).select('name').lean().exec();
 
     // Use a static warm greeting in Telugu to ensure immediate response
     const greeting = user?.name
@@ -62,28 +64,50 @@ export async function sendInitialGreeting(
     // Save conversation
     await conversation.save();
 
-    // Emit greeting to client
+    // Emit greeting to client IMMEDIATELY (don't wait for TTS)
     const callIdStr = conversation.callId.toString();
-
-    // Generate audio for the greeting
-    let audioData = null;
-    try {
-      const ttsResponse = await generateTeluguSpeech(greeting);
-      audioData = ttsResponse.audio;
-    } catch (ttsError) {
-      console.error('TTS generation failed for greeting:', ttsError);
-    }
-
+    console.log(`📤 Sending initial greeting immediately to call:${callIdStr}`);
+    
+    // Send greeting immediately without waiting for TTS
     io.to(`call:${callIdStr}`).emit('ai_response', {
       conversationId,
       message: greeting,
-      audio: audioData, // Send base64 audio if available
+      audio: undefined, // TTS will be generated in background
     });
+
+    // Generate TTS asynchronously (non-blocking, with timeout wrapper)
+    // Use Promise.race to ensure it doesn't hang indefinitely
+    Promise.race([
+      generateTeluguSpeech(greeting),
+      new Promise<null>((resolve) => 
+        setTimeout(() => resolve(null), 8000) // 8 second max wait
+      ),
+    ])
+      .then((ttsResponse) => {
+        if (ttsResponse && ttsResponse.audio) {
+          // Send audio update (client will update existing message)
+          console.log(`📤 Sending TTS audio update for initial greeting`);
+          io.to(`call:${callIdStr}`).emit('ai_response_audio', {
+            conversationId,
+            message: greeting,
+            audio: ttsResponse.audio,
+          });
+        } else {
+          console.log('TTS generation timed out or skipped for greeting');
+        }
+      })
+      .catch((error) => {
+        // Silently continue - greeting already sent without audio
+        // Don't log as error since this is expected if TTS service is unavailable
+        if (error.message !== 'TTS service unavailable') {
+          console.log('TTS generation for greeting (non-blocking):', error.message);
+        }
+      });
   } catch (error) {
     console.error('Error sending initial greeting:', error);
     // Fallback to default greeting - try to get callId from conversation
     try {
-      const conversation = await ConversationModel.findById(conversationId);
+      const conversation = await ConversationModel.findById(conversationId).lean();
       if (conversation && conversation.callId) {
         const defaultGreeting = 'హలో, మీరు ఎలా ఉన్నారు?';
         io.to(`call:${conversation.callId.toString()}`).emit('ai_response', {
@@ -176,62 +200,111 @@ export async function addMessageAndRespond(
     // Update transcript
     conversation.transcript += `User: ${userMessage}\n`;
 
-    // Get user info for context
-    const user = await UserModel.findById(conversation.userId).select('name');
-    const previousConversations = await ConversationModel.find({
-      userId: conversation.userId,
-      _id: { $ne: conversationId },
-    })
-      .sort({ createdAt: -1 })
-      .limit(5);
+    // Translate Telugu input to English for Phi-3 API
+    console.log(`🌐 Translating user input from Telugu to English...`);
+    const englishUserMessage = await translateTeluguToEnglish(userMessage);
+    console.log(`✅ Translated: "${userMessage.substring(0, 50)}..." → "${englishUserMessage.substring(0, 50)}..."`);
+
+    // Get user info for context (optimized queries)
+    const [user, previousConversations] = await Promise.all([
+      UserModel.findById(conversation.userId).select('name').lean().exec(),
+      ConversationModel.find({
+        userId: conversation.userId,
+        _id: { $ne: conversationId },
+      })
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .lean()
+        .exec(),
+    ]);
+
+    // Build context: Translate recent messages to English for Phi-3
+    // Optimize: Only translate last 3 messages in parallel for faster response
+    const recentMessages = conversation.messages.slice(-3);
+    const contextMessagesPromises = recentMessages.map(async (msg) => {
+      // Translate to English (parallel execution)
+      const translated = await translateTeluguToEnglish(msg.content);
+      return { role: msg.role, content: translated };
+    });
+
+    // Execute translations in parallel
+    const contextMessages = await Promise.all(contextMessagesPromises);
+
+    // Add current translated user message
+    contextMessages.push({
+      role: 'user',
+      content: englishUserMessage,
+    });
 
     const context: ConversationContext = {
-      messages: conversation.messages.map((msg) => ({
-        role: msg.role,
-        content: msg.content,
-      })),
+      messages: contextMessages,
       userInfo: {
         name: user?.name,
         previousTopics: previousConversations.flatMap((conv) => conv.keyTopics || []),
       },
     };
 
-    // Generate AI response
-    const assistantMessage = await generateResponse(userMessage, context);
+    // Generate AI response in English
+    console.log(`🤖 Generating AI response for: "${englishUserMessage}"`);
+    const englishAssistantMessage = await generateResponse(englishUserMessage, context);
 
-    // Add assistant message
+    // Translate English response back to Telugu
+    console.log(`🌐 Translating AI response from English to Telugu...`);
+    const teluguAssistantMessage = await translateEnglishToTelugu(englishAssistantMessage);
+    console.log(`✅ Translated: "${englishAssistantMessage}" → "${teluguAssistantMessage}"`);
+
+    // Add assistant message (store Telugu version)
     conversation.messages.push({
       role: 'assistant',
-      content: assistantMessage,
+      content: teluguAssistantMessage,
       timestamp: new Date(),
     });
 
     // Update transcript
-    conversation.transcript += `ANVI: ${assistantMessage}\n`;
+    conversation.transcript += `ANVI: ${teluguAssistantMessage}\n`;
 
     // Save conversation
     await conversation.save();
 
-    // Extract tasks in real-time (non-blocking)
-    extractAndCreateTasks(conversationId).catch((error) => {
-      console.error('Error in background task extraction:', error);
-    });
+    // Task extraction runs only at call end (createTasksFromConversation) to avoid
+    // parallel Gemini calls and rate limits. No per-message extraction here.
 
-    // Generate audio for the AI response
-    let audioData = null;
-    try {
-      const ttsResponse = await generateTeluguSpeech(assistantMessage);
-      audioData = ttsResponse.audio;
-    } catch (ttsError) {
-      console.error('TTS generation failed for message:', ttsError);
-    }
-
-    // Emit response to client
-    io.to(`call:${conversation.callId}`).emit('ai_response', {
+    // Emit response to client IMMEDIATELY (don't wait for TTS)
+    const callIdStr = conversation.callId.toString();
+    console.log(`📤 Emitting AI response to call:${callIdStr}, conversationId: ${conversationId}`);
+    io.to(`call:${callIdStr}`).emit('ai_response', {
       conversationId,
-      message: assistantMessage,
-      audio: audioData,
+      message: teluguAssistantMessage,
+      audio: undefined, // Will be sent when ready
     });
+
+    // Generate TTS audio asynchronously (non-blocking for fast response)
+    // Use Promise.race to ensure it doesn't hang indefinitely
+    Promise.race([
+      generateTeluguSpeech(teluguAssistantMessage),
+      new Promise<null>((resolve) => 
+        setTimeout(() => resolve(null), 8000) // 8 second max wait
+      ),
+    ])
+      .then((ttsResponse) => {
+        if (ttsResponse && ttsResponse.audio) {
+          console.log(`📤 Sending TTS audio update for message`);
+          io.to(`call:${callIdStr}`).emit('ai_response_audio', {
+            conversationId,
+            message: teluguAssistantMessage,
+            audio: ttsResponse.audio,
+          });
+        } else {
+          console.log('TTS generation timed out or skipped for message');
+        }
+      })
+      .catch((ttsError) => {
+        // Don't log as error if service is unavailable (expected)
+        if (ttsError.message !== 'TTS service unavailable') {
+          console.log('TTS generation failed (non-blocking):', ttsError.message);
+        }
+        // Continue without audio - message already sent
+      });
 
     return {
       assistantMessage,

@@ -30,7 +30,8 @@ export const conversationService = {
   },
 
   async sendMessage(conversationId: string, message: string): Promise<any> {
-    const response = await api.post(`/conversations/${conversationId}/message`, { message });
+    // Longer timeout: backend runs Gemini + TTS (often 15–40s)
+    const response = await api.post(`/conversations/${conversationId}/message`, { message }, { timeout: 60000 });
     return response.data.data;
   },
 
@@ -47,6 +48,16 @@ export const conversationService = {
   offAIResponse(callback: (data: any) => void): void {
     const socket = getSocket();
     socket?.off('ai_response', callback);
+  },
+
+  onAudioUpdate(callback: (data: { conversationId: string; message: string; audio: string }) => void): void {
+    const socket = getSocket();
+    socket?.on('ai_response_audio', callback);
+  },
+
+  offAudioUpdate(callback: (data: any) => void): void {
+    const socket = getSocket();
+    socket?.off('ai_response_audio', callback);
   },
 
   emitTranscriptUpdate(callId: string, transcript: string, userId: string): void {

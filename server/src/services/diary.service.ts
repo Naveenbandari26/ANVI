@@ -1,6 +1,6 @@
 import { DiaryModel, IDiary } from '../models/diary.schema';
 import { ConversationModel } from '../models/conversation.schema';
-import { generateDiaryEntry } from './gemini.service';
+import { generateDiaryEntry } from './phi3.service';
 
 /**
  * Create diary entry from conversation
