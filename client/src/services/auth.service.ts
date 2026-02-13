@@ -1,5 +1,6 @@
 import api from '../config/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { disconnectSocket, initializeSocket } from '../config/socket';
 
 export interface LoginCredentials {
   email: string;
@@ -32,7 +33,8 @@ export const authService = {
     
     await AsyncStorage.setItem('authToken', accessToken);
     await AsyncStorage.setItem('userId', user.id);
-    
+    disconnectSocket();
+    initializeSocket().catch(() => {});
     return response.data;
   },
 
@@ -42,7 +44,8 @@ export const authService = {
     
     await AsyncStorage.setItem('authToken', accessToken);
     await AsyncStorage.setItem('userId', user.id);
-    
+    disconnectSocket();
+    initializeSocket().catch(() => {});
     return response.data;
   },
 

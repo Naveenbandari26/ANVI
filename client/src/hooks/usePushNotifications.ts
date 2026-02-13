@@ -13,11 +13,11 @@ Notifications.setNotificationHandler({
         const data = notification.request.content.data;
         const isIncomingCall = data?.type === 'INCOMING_CALL';
         return {
-            shouldShowAlert: !isIncomingCall,
+            shouldShowAlert: true,
             shouldPlaySound: true,
             shouldSetBadge: false,
-            shouldShowBanner: !isIncomingCall,
-            shouldShowList: !isIncomingCall,
+            shouldShowBanner: true,
+            shouldShowList: true,
         };
     },
 });

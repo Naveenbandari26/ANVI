@@ -3,6 +3,10 @@ import { View, Text, StyleSheet, Button } from 'react-native';
 
 interface Props {
   children: ReactNode;
+  /** When set, error UI shows this button and calls onClose instead of Try Again */
+  onClose?: () => void;
+  closeButtonTitle?: string;
+  fallback?: ReactNode;
 }
 
 interface State {
@@ -30,15 +34,19 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public render() {
     if (this.state.hasError) {
+      if (this.props.fallback) return this.props.fallback;
+      const { onClose, closeButtonTitle } = this.props;
       return (
         <View style={styles.container}>
           <Text style={styles.title}>Something went wrong</Text>
           <Text style={styles.message}>{this.state.error?.message || 'Unknown error'}</Text>
-          <Button title="Try Again" onPress={this.handleReset} />
+          <Button
+            title={closeButtonTitle ?? (onClose ? 'Close' : 'Try Again')}
+            onPress={onClose ?? this.handleReset}
+          />
         </View>
       );
     }
-
     return this.props.children;
   }
 }

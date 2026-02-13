@@ -118,66 +118,47 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
     };
   }, []);
 
-  // Play TTS audio using native TTS if Telugu is available, otherwise fallback to server audio
+  // Play TTS: always try native TTS first, then server audio if provided
   const playTTSAudio = async (text: string, audioData?: string, isInitialGreeting: boolean = false) => {
+    if (!text?.trim()) return;
     try {
-      // Check if native Telugu TTS is available
-      const useNativeTTS = ttsSupport?.isSupported ?? false;
+      setIsPlayingTTS(true);
+      if (soundRef.current) {
+        await soundRef.current.unloadAsync();
+        soundRef.current = null;
+      }
+      await stopSpeaking();
 
-      if (useNativeTTS) {
-        // Use native TTS
-        console.log('🔊 Using native Telugu TTS');
-        setIsPlayingTTS(true);
+      const finishPlaying = () => {
+        setIsPlayingTTS(false);
+        if (hasReceivedInitialGreeting) startListening();
+      };
+      const fallbackToServer = () => {
+        if (audioData) playServerAudio(text, audioData, isInitialGreeting);
+        else setIsPlayingTTS(false);
+      };
 
-        // Stop any currently playing audio (expo-av)
-        if (soundRef.current) {
-          await soundRef.current.unloadAsync();
-          soundRef.current = null;
-        }
-
-        // Stop any native TTS that might be playing
-        await stopSpeaking();
-
-        // Speak using native TTS
+      try {
         await speakText(text, {
           language: 'te-IN',
-          onStart: () => {
-            setIsPlayingTTS(true);
-          },
-          onFinish: () => {
+          onStart: () => setIsPlayingTTS(true),
+          onFinish: finishPlaying,
+          onError: () => {
             setIsPlayingTTS(false);
-
-            // Only start listening automatically after greeting is received
-            // This ensures user can only respond after hearing the greeting
-            if (hasReceivedInitialGreeting) {
-              startListening();
-            }
-          },
-          onError: (error) => {
-            console.error('Native TTS error:', error);
-            setIsPlayingTTS(false);
-            
-            // Fallback to server audio if available
-            if (audioData) {
-              console.log('🔄 Falling back to server-side TTS');
-              playServerAudio(text, audioData, isInitialGreeting);
-            }
+            fallbackToServer();
           },
         });
-      } else {
-        // Fallback to server-side audio playback
-        if (!audioData) {
-          console.log('⏳ No audio data provided and native TTS unavailable, waiting for server to generate TTS...');
-          return;
+      } catch (_) {
+        if (audioData) {
+          console.log('🔊 Using server-side TTS (native unavailable)');
+          await playServerAudio(text, audioData, isInitialGreeting);
+        } else {
+          setIsPlayingTTS(false);
         }
-
-        console.log('🔊 Using server-side TTS (Telugu not available on device)');
-        await playServerAudio(text, audioData, isInitialGreeting);
       }
     } catch (error) {
       console.error('Error playing TTS audio:', error);
       setIsPlayingTTS(false);
-      // Continue even if TTS fails - user can still read the message
     }
   };
 
@@ -291,13 +272,8 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
           hasReceivedGreetingRef.current = true;
         }
 
-        // Play AI response as Telugu TTS audio if provided by server
-        // If not provided, wait for ai_response_audio event
-        if (data.audio) {
-          await playTTSAudio(data.message, data.audio, isFirstAssistantMessage);
-        } else {
-          console.log('⏳ Message received without audio, waiting for TTS generation...');
-        }
+        // Always try to play message as voice: native TTS first, then server audio if provided
+        await playTTSAudio(data.message, data.audio, isFirstAssistantMessage);
       } else {
         console.log('❌ Conversation ID mismatch - ignoring response');
       }
@@ -420,6 +396,17 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
     handleSpeechResult(text);
   };
 
+  const currentStatus = isPlayingTTS
+    ? 'ANVI is speaking...'
+    : isListening
+      ? 'Listening...'
+      : isProcessing
+        ? 'ANVI is thinking...'
+        : !hasReceivedInitialGreeting
+          ? 'Connecting...'
+          : 'Tap mic to speak';
+  const lastAssistantMessage = [...messages].reverse().find(m => m.role === 'assistant')?.content;
+
   return (
     <>
       <KeyboardAvoidingView
@@ -429,12 +416,29 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
       <View style={styles.header}>
         <Text style={styles.name}>ANVI</Text>
         <Text style={styles.status}>Call in progress</Text>
+        <View style={styles.callStatusBadge}>
+          <View style={[styles.statusDot, (isListening || isPlayingTTS) && styles.statusDotActive]} />
+          <Text style={styles.callStatusText}>{currentStatus}</Text>
+        </View>
+      </View>
+
+      <View style={styles.voiceSection}>
+        {isPlayingTTS && (
+          <ActivityIndicator size="large" color="#6366f1" style={styles.voiceSpinner} />
+        )}
+        {lastAssistantMessage && !isPlayingTTS && (
+          <Text style={styles.currentPhrase} numberOfLines={3}>{lastAssistantMessage}</Text>
+        )}
+        {!hasReceivedInitialGreeting && !lastAssistantMessage && (
+          <Text style={styles.currentPhrasePlaceholder}>Waiting for ANVI...</Text>
+        )}
       </View>
 
       <ScrollView
         ref={scrollViewRef}
         style={styles.messagesContainer}
         contentContainerStyle={styles.messagesContent}
+        showsVerticalScrollIndicator={false}
       >
         {messages.map((msg, index) => (
           <View
@@ -447,24 +451,6 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
             <Text style={styles.messageText}>{msg.content}</Text>
           </View>
         ))}
-        {!hasReceivedInitialGreeting && messages.length === 0 && (
-          <View style={[styles.message, styles.assistantMessage]}>
-            <ActivityIndicator size="small" color="#6366f1" />
-            <Text style={styles.messageText}>Waiting for ANVI...</Text>
-          </View>
-        )}
-        {isProcessing && (
-          <View style={[styles.message, styles.assistantMessage]}>
-            <ActivityIndicator size="small" color="#6366f1" />
-            <Text style={styles.messageText}>ANVI is thinking...</Text>
-          </View>
-        )}
-        {isPlayingTTS && (
-          <View style={[styles.message, styles.assistantMessage]}>
-            <ActivityIndicator size="small" color="#6366f1" />
-            <Text style={styles.messageText}>Playing audio...</Text>
-          </View>
-        )}
       </ScrollView>
 
       <View style={styles.controls}>
@@ -478,33 +464,28 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
           </View>
         ) : null}
 
-        {sttError ? (
-          <View style={styles.manualInputContainer}>
-            <TextInput
-              style={[
-                styles.manualInput,
-                !hasReceivedInitialGreeting && styles.manualInputDisabled
-              ]}
-              value={manualInput}
-              onChangeText={setManualInput}
-              placeholder={hasReceivedInitialGreeting ? "Type in Telugu to test..." : "Waiting for greeting..."}
-              placeholderTextColor="#94a3b8"
-              onSubmitEditing={handleManualSubmit}
-              returnKeyType="send"
-              editable={hasReceivedInitialGreeting}
-            />
-            <TouchableOpacity
-              style={[
-                styles.sendButton,
-                !hasReceivedInitialGreeting && styles.sendButtonDisabled
-              ]}
-              onPress={handleManualSubmit}
-              disabled={!hasReceivedInitialGreeting}
-            >
-              <Ionicons name="send" size={20} color={hasReceivedInitialGreeting ? "#fff" : "#666"} />
-            </TouchableOpacity>
-          </View>
-        ) : null}
+        <View style={styles.manualInputRow}>
+          <TextInput
+            style={[
+              styles.manualInput,
+              !hasReceivedInitialGreeting && styles.manualInputDisabled
+            ]}
+            value={manualInput}
+            onChangeText={setManualInput}
+            placeholder={hasReceivedInitialGreeting ? "Or type here..." : "Waiting for greeting..."}
+            placeholderTextColor="#94a3b8"
+            onSubmitEditing={handleManualSubmit}
+            returnKeyType="send"
+            editable={hasReceivedInitialGreeting}
+          />
+          <TouchableOpacity
+            style={[styles.sendButton, !hasReceivedInitialGreeting && styles.sendButtonDisabled]}
+            onPress={handleManualSubmit}
+            disabled={!hasReceivedInitialGreeting}
+          >
+            <Ionicons name="send" size={20} color={hasReceivedInitialGreeting ? "#fff" : "#666"} />
+          </TouchableOpacity>
+        </View>
 
         <View style={styles.buttonRow}>
           <TouchableOpacity
@@ -518,16 +499,13 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
           >
             <Ionicons
               name={isListening ? 'stop' : 'mic'}
-              size={32}
+              size={36}
               color={hasReceivedInitialGreeting ? "#fff" : "#666"}
             />
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.endCallButton}
-            onPress={handleEndCall}
-          >
-            <Ionicons name="call" size={24} color="#fff" />
+          <TouchableOpacity style={styles.endCallButton} onPress={handleEndCall}>
+            <Ionicons name="call" size={28} color="#fff" />
           </TouchableOpacity>
         </View>
       </View>
@@ -558,14 +536,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#0f172a',
   },
   header: {
-    paddingTop: 60,
-    paddingBottom: 20,
+    paddingTop: 50,
+    paddingBottom: 16,
     alignItems: 'center',
     borderBottomWidth: 1,
     borderBottomColor: '#1e293b',
   },
   name: {
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: 'bold',
     color: '#fff',
     marginBottom: 4,
@@ -573,9 +551,51 @@ const styles = StyleSheet.create({
   status: {
     fontSize: 14,
     color: '#94a3b8',
+    marginBottom: 12,
+  },
+  callStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#64748b',
+  },
+  statusDotActive: {
+    backgroundColor: '#22c55e',
+  },
+  callStatusText: {
+    fontSize: 15,
+    color: '#e2e8f0',
+    fontWeight: '500',
+  },
+  voiceSection: {
+    minHeight: 72,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1e293b',
+  },
+  currentPhrase: {
+    fontSize: 18,
+    color: '#e2e8f0',
+    textAlign: 'center',
+  },
+  currentPhrasePlaceholder: {
+    fontSize: 16,
+    color: '#64748b',
+  },
+  voiceSpinner: {
+    marginVertical: 8,
   },
   messagesContainer: {
     flex: 1,
+    maxHeight: 160,
   },
   messagesContent: {
     padding: 16,
@@ -632,26 +652,26 @@ const styles = StyleSheet.create({
   },
   errorContainer: {
     width: '100%',
-    paddingHorizontal: 20,
-    marginBottom: 10,
+    paddingHorizontal: 16,
+    marginBottom: 8,
     alignItems: 'center',
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
     borderRadius: 8,
-    padding: 8,
+    padding: 10,
   },
   errorText: {
-    color: '#ef4444',
-    fontSize: 12,
+    color: '#fca5a5',
+    fontSize: 13,
     textAlign: 'center',
   },
-  manualInputContainer: {
+  manualInputRow: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#1e293b',
-    borderRadius: 25,
-    paddingHorizontal: 15,
-    paddingVertical: 5,
-    marginBottom: 10,
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    marginBottom: 12,
     width: '100%',
   },
   manualInput: {
@@ -670,9 +690,9 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   recordButton: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     backgroundColor: '#6366f1',
     justifyContent: 'center',
     alignItems: 'center',
@@ -685,9 +705,9 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   endCallButton: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: '#ef4444',
     justifyContent: 'center',
     alignItems: 'center',

@@ -1,17 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
+import { AppState, AppStateStatus } from 'react-native';
 import { callService } from '../services/call.service';
 import { initializeSocket, getSocket } from '../config/socket';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { addIncomingCallListener } from '../events/incomingCallEvents';
 import { cancelCallNotification } from '../services/fullScreenCallNotification';
 import {
-  initializeCallKeep,
   displayIncomingCall,
   endCall as endNativeCall,
   answerCall as answerNativeCall,
   rejectCall as rejectNativeCall,
   setupCallKeepListeners,
-  isNativeCallAvailable,
 } from '../services/nativeCall.service';
 
 interface IncomingCall {
@@ -30,45 +29,44 @@ export const useCallManager = () => {
 
   useEffect(() => {
     let mounted = true;
+    const removeSocketListener = () => getSocket()?.off('incoming_call');
 
-        const handleIncomingCall = async (data: IncomingCall) => {
+    const handleIncomingCall = async (data: IncomingCall) => {
       if (!mounted) return;
       setIncomingCall(data);
       setNativeOverlayFailed(false);
-
       if (useNativeOverlay) {
         const displayed = await displayIncomingCall(data.callId, 'ANVI');
-        if (displayed) {
-          return;
-        }
+        if (displayed) return;
         setNativeOverlayFailed(true);
       }
     };
 
     const unsubscribePush = addIncomingCallListener(handleIncomingCall);
 
-    let socketCleanup: (() => void) | null = null;
-
     const setupSocket = async () => {
       try {
         await initializeSocket();
-        const userId = await AsyncStorage.getItem('userId');
+        const socket = getSocket();
+        if (socket) {
+          socket.off('incoming_call');
+          socket.on('incoming_call', handleIncomingCall);
+        }
 
+        const userId = await AsyncStorage.getItem('userId');
+        if (userId && socket?.connected) {
+          socket?.emit('join_user_room', userId);
+        }
         if (!userId) return;
 
-        // Check for any currently ringing calls for this user
         const ringingCalls = await callService.getUserCalls('ringing');
         if (mounted && ringingCalls.length > 0) {
           const latestCall = ringingCalls[0];
           const scheduledDate = new Date(latestCall.scheduledTime);
           const now = new Date();
           const ageInMinutes = (now.getTime() - scheduledDate.getTime()) / 60000;
-
           if (ageInMinutes < 2) {
-            const callData = {
-              callId: latestCall._id,
-              scheduledTime: latestCall.scheduledTime,
-            };
+            const callData = { callId: latestCall._id, scheduledTime: latestCall.scheduledTime };
             setIncomingCall(callData);
             if (useNativeOverlay) {
               const displayed = await displayIncomingCall(callData.callId, 'ANVI');
@@ -76,22 +74,20 @@ export const useCallManager = () => {
             }
           }
         }
-
-        const socket = getSocket();
-        if (socket) {
-          socket.on('incoming_call', handleIncomingCall);
-          socketCleanup = () => socket.off('incoming_call', handleIncomingCall);
-        }
       } catch (error) {
         console.error('Error setting up socket and initial call check:', error);
       }
     };
 
     setupSocket();
+    const appStateSub = AppState.addEventListener('change', (state: AppStateStatus) => {
+      if (state === 'active') setupSocket();
+    });
 
     return () => {
       mounted = false;
-      socketCleanup?.();
+      appStateSub.remove();
+      removeSocketListener();
       unsubscribePush();
     };
   }, [useNativeOverlay]);
@@ -100,18 +96,28 @@ export const useCallManager = () => {
     if (isProcessing) return;
     setIsProcessing(true);
     try {
-      // Answer in native UI if available
       if (useNativeOverlay) {
         await answerNativeCall(callId);
       }
 
       const result = await callService.acceptCall(callId);
-      setActiveCall(callId);
-      setActiveConversation(result.conversation._id);
+      const conversationId = result?.conversation?._id != null
+        ? String(result.conversation._id)
+        : (result?.call as any)?.conversationId != null
+          ? String((result.call as any).conversationId)
+          : null;
+
+      if (!conversationId) {
+        console.error('Accept call: missing conversation id', result);
+        setIsProcessing(false);
+        return;
+      }
+
       setIncomingCall(null);
+      setActiveCall(callId);
+      setActiveConversation(conversationId);
       cancelCallNotification(callId).catch(() => {});
 
-      // Notify server and join call room
       const socket = getSocket();
       const userId = await AsyncStorage.getItem('userId');
       if (socket && userId) {
@@ -119,7 +125,7 @@ export const useCallManager = () => {
       }
     } catch (error) {
       console.error('Error accepting call:', error);
-      throw error;
+      setIsProcessing(false);
     } finally {
       setIsProcessing(false);
     }

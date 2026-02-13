@@ -1,4 +1,3 @@
-import Tts from 'react-native-tts';
 import { Platform, Alert } from 'react-native';
 
 export interface NativeTTSVoice {
@@ -17,12 +16,21 @@ export interface NativeTTSSupport {
   availableVoices: NativeTTSVoice[];
 }
 
+function getTts(): any {
+  try {
+    return require('react-native-tts').default;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Initialize TTS and check for Telugu support
  */
 export async function initializeTTS(): Promise<NativeTTSSupport> {
   try {
-    // Get all available voices
+    const Tts = getTts();
+    if (!Tts) return { isSupported: false, availableVoices: [] };
     const voices = await Tts.voices();
     
     // Find Telugu voice (te-IN is the BCP-47 code for Telugu)
@@ -86,6 +94,8 @@ export async function initializeTTS(): Promise<NativeTTSSupport> {
  */
 export async function checkTeluguSupport(): Promise<boolean> {
   try {
+    const Tts = getTts();
+    if (!Tts) return false;
     const voices = await Tts.voices();
     const hasTelugu = voices.some((v: NativeTTSVoice) => 
       v.language === 'te-IN' || 
@@ -116,24 +126,25 @@ export async function speakText(
 ): Promise<void> {
   return new Promise(async (resolve, reject) => {
     try {
-      // Check if Telugu is available
+      const Tts = getTts();
+      if (!Tts) {
+        options?.onError?.(new Error('TTS not available'));
+        reject(new Error('TTS not available'));
+        return;
+      }
       const hasTelugu = await checkTeluguSupport();
-      
       if (!hasTelugu && options?.language === 'te-IN') {
-        // Telugu not available - this will be handled by fallback
         const error = new Error('Telugu TTS not available on this device');
         options?.onError?.(error);
         reject(error);
         return;
       }
 
-      // Set up event listeners
       const finishListener = Tts.addEventListener('tts-finish', () => {
         Tts.removeEventListener('tts-finish', finishListener);
         options?.onFinish?.();
         resolve();
       });
-
       const errorListener = Tts.addEventListener('tts-error', (error: any) => {
         Tts.removeEventListener('tts-error', errorListener);
         Tts.removeEventListener('tts-finish', finishListener);
@@ -141,24 +152,13 @@ export async function speakText(
         options?.onError?.(err);
         reject(err);
       });
-
       const startListener = Tts.addEventListener('tts-start', () => {
         Tts.removeEventListener('tts-start', startListener);
         options?.onStart?.();
       });
-
-      // Configure TTS settings
-      if (options?.rate !== undefined) {
-        Tts.setDefaultRate(options.rate);
-      }
-      if (options?.pitch !== undefined) {
-        Tts.setDefaultPitch(options.pitch);
-      }
-      if (options?.language) {
-        await Tts.setDefaultLanguage(options.language);
-      }
-
-      // Speak the text
+      if (options?.rate !== undefined) Tts.setDefaultRate(options.rate);
+      if (options?.pitch !== undefined) Tts.setDefaultPitch(options.pitch);
+      if (options?.language) await Tts.setDefaultLanguage(options.language);
       await Tts.speak(text);
     } catch (error: any) {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -173,7 +173,8 @@ export async function speakText(
  */
 export async function stopSpeaking(): Promise<void> {
   try {
-    await Tts.stop();
+    const Tts = getTts();
+    if (Tts) await Tts.stop();
   } catch (error) {
     console.error('Error stopping TTS:', error);
   }
@@ -184,6 +185,8 @@ export async function stopSpeaking(): Promise<void> {
  */
 export async function getVoicesForLanguage(languageCode: string): Promise<NativeTTSVoice[]> {
   try {
+    const Tts = getTts();
+    if (!Tts) return [];
     const voices = await Tts.voices();
     return voices.filter((v: NativeTTSVoice) => 
       v.language === languageCode || 
@@ -199,7 +202,8 @@ export async function getVoicesForLanguage(languageCode: string): Promise<Native
  * Show alert to user about missing Telugu support
  */
 export function showTeluguInstallPrompt(): void {
-  if (Platform.OS === 'android') {
+  const Tts = getTts();
+  if (Platform.OS === 'android' && Tts) {
     Alert.alert(
       'Telugu Voice Not Available',
       'To use Telugu text-to-speech, please install the Telugu language pack:\n\n' +
@@ -208,10 +212,7 @@ export function showTeluguInstallPrompt(): void {
       '3. Install Telugu (te-IN) language pack\n\n' +
       'The app will use server-side TTS until Telugu is installed.',
       [
-        {
-          text: 'OK',
-          style: 'default',
-        },
+        { text: 'OK', style: 'default' as const },
         {
           text: 'Open Settings',
           onPress: async () => {
@@ -224,7 +225,7 @@ export function showTeluguInstallPrompt(): void {
         },
       ]
     );
-  } else {
+  } else if (Platform.OS !== 'android') {
     Alert.alert(
       'Telugu Voice Not Available',
       'Telugu text-to-speech may not be available on this iOS device. ' +

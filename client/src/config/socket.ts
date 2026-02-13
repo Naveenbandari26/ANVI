@@ -181,14 +181,15 @@ export const initializeSocket = async (): Promise<Socket> => {
       reconnectionDelay: 1000,
     });
 
-    socket.on('connect', () => {
+    socket.on('connect', async () => {
       console.log('🔌 Connected to server');
-      if (userId) {
-        try {
-          socket?.emit('join_user_room', userId);
-        } catch (error) {
-          console.warn('Error joining user room:', error);
+      try {
+        const currentUserId = await AsyncStorage.getItem('userId');
+        if (currentUserId) {
+          socket?.emit('join_user_room', currentUserId);
         }
+      } catch (error) {
+        console.warn('Error joining user room:', error);
       }
     });
 
