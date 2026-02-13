@@ -16,7 +16,6 @@ import { Audio } from 'expo-av';
 import { conversationService } from '../../services/conversation.service';
 import { callService } from '../../services/call.service';
 import { useNativeSTT } from '../../hooks/useNativeSTT';
-import { generateTTS } from '../../services/tts.service';
 
 interface ActiveCallScreenProps {
   callId: string;
@@ -78,21 +77,16 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
   // Play TTS audio
   const playTTSAudio = async (text: string, audioData?: string, isInitialGreeting: boolean = false) => {
     try {
+      // If no audio data provided, skip playback and wait for server to send audio via socket
+      if (!audioData) {
+        console.log('⏳ No audio data provided, waiting for server to generate TTS...');
+        return;
+      }
+
       setIsPlayingTTS(true);
 
-      let audioUri: string;
-
-      if (audioData) {
-        // Use the audio data provided by the server
-        audioUri = `data:audio/wav;base64,${audioData}`;
-      } else {
-        // Fallback: Generate TTS audio locally if not provided by server
-        const audioBase64 = await generateTTS({
-          text: text,
-          speaker: 'lalitha',
-        });
-        audioUri = `data:audio/wav;base64,${audioBase64}`;
-      }
+      // Use the audio data provided by the server
+      const audioUri = `data:audio/wav;base64,${audioData}`;
 
       // Stop any currently playing audio
       if (soundRef.current) {
@@ -194,10 +188,12 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
           hasReceivedGreetingRef.current = true;
         }
 
-        // Play AI response as Telugu TTS audio (prioritizing server-provided audio)
-        // Only play if audio is provided (for initial greeting, play immediately even without audio)
-        if (data.audio || isFirstAssistantMessage) {
+        // Play AI response as Telugu TTS audio if provided by server
+        // If not provided, wait for ai_response_audio event
+        if (data.audio) {
           await playTTSAudio(data.message, data.audio, isFirstAssistantMessage);
+        } else {
+          console.log('⏳ Message received without audio, waiting for TTS generation...');
         }
       } else {
         console.log('❌ Conversation ID mismatch - ignoring response');

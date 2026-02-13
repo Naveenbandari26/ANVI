@@ -75,14 +75,8 @@ export async function sendInitialGreeting(
       audio: undefined, // TTS will be generated in background
     });
 
-    // Generate TTS asynchronously (non-blocking, with timeout wrapper)
-    // Use Promise.race to ensure it doesn't hang indefinitely
-    Promise.race([
-      generateTeluguSpeech(greeting),
-      new Promise<null>((resolve) => 
-        setTimeout(() => resolve(null), 8000) // 8 second max wait
-      ),
-    ])
+    // Generate TTS asynchronously (non-blocking)
+    generateTeluguSpeech(greeting)
       .then((ttsResponse) => {
         if (ttsResponse && ttsResponse.audio) {
           // Send audio update (client will update existing message)
@@ -92,8 +86,6 @@ export async function sendInitialGreeting(
             message: greeting,
             audio: ttsResponse.audio,
           });
-        } else {
-          console.log('TTS generation timed out or skipped for greeting');
         }
       })
       .catch((error) => {
@@ -278,14 +270,8 @@ export async function addMessageAndRespond(
       audio: undefined, // Will be sent when ready
     });
 
-    // Generate TTS audio asynchronously (non-blocking for fast response)
-    // Use Promise.race to ensure it doesn't hang indefinitely
-    Promise.race([
-      generateTeluguSpeech(teluguAssistantMessage),
-      new Promise<null>((resolve) => 
-        setTimeout(() => resolve(null), 8000) // 8 second max wait
-      ),
-    ])
+    // Generate TTS audio asynchronously (non-blocking)
+    generateTeluguSpeech(teluguAssistantMessage)
       .then((ttsResponse) => {
         if (ttsResponse && ttsResponse.audio) {
           console.log(`📤 Sending TTS audio update for message`);
@@ -294,8 +280,6 @@ export async function addMessageAndRespond(
             message: teluguAssistantMessage,
             audio: ttsResponse.audio,
           });
-        } else {
-          console.log('TTS generation timed out or skipped for message');
         }
       })
       .catch((ttsError) => {

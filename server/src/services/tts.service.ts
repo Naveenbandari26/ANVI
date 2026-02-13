@@ -62,9 +62,8 @@ async function checkTTSServiceHealth(): Promise<boolean> {
   }
 
   try {
-    const response = await axios.get(`${TTS_SERVICE_URL}/health`, {
-      timeout: 2000, // Very quick health check
-    });
+    // No timeout - let health check take as long as needed
+    const response = await axios.get(`${TTS_SERVICE_URL}/health`);
     ttsServiceAvailable = response.data?.status === 'OK';
     lastHealthCheck = now;
     return ttsServiceAvailable;
@@ -77,7 +76,7 @@ async function checkTTSServiceHealth(): Promise<boolean> {
 
 /**
  * Generate Telugu audio from text using the local TTS microservice
- * Optimized for fast response with timeout and connection reuse
+ * No timeout - will wait as long as needed for generation
  * Never blocks - returns error gracefully if service unavailable
  */
 export async function generateTeluguSpeech(text: string, speaker: 'lalitha' | 'prakash' | 'kiran' = 'lalitha'): Promise<TTSResponse> {
@@ -89,7 +88,7 @@ export async function generateTeluguSpeech(text: string, speaker: 'lalitha' | 'p
   }
 
   try {
-    // Use shorter timeout for faster failure
+    // No timeout - let it take as long as needed
     const response = await axios.post(
       `${TTS_SERVICE_URL}/generate-base64`,
       {
@@ -97,13 +96,11 @@ export async function generateTeluguSpeech(text: string, speaker: 'lalitha' | 'p
         speaker
       },
       {
-        timeout: 10000, // Reduced to 10 seconds for faster failure
         headers: {
           'Content-Type': 'application/json',
           'Connection': 'keep-alive',
         },
         maxRedirects: 0,
-        // Add validateStatus to handle non-200 responses quickly
         validateStatus: (status) => status >= 200 && status < 300,
       }
     );
@@ -118,11 +115,11 @@ export async function generateTeluguSpeech(text: string, speaker: 'lalitha' | 'p
     ttsServiceAvailable = true;
     return response.data;
   } catch (error: any) {
-    // Mark service as unavailable on error
-    if (error.code === 'ECONNABORTED' || error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
+    // Mark service as unavailable on connection errors
+    if (error.code === 'ECONNREFUSED') {
       ttsServiceAvailable = false;
-      console.warn('TTS service timeout or connection error - marking as unavailable');
-      throw new Error('TTS service timeout');
+      console.warn('TTS service connection refused - marking as unavailable');
+      throw new Error('TTS service unavailable');
     }
     
     // For other errors, don't mark as unavailable (might be temporary)
@@ -152,6 +149,7 @@ export async function generateTeluguTTS(request: TTSRequest): Promise<TTSBinaryR
   const speaker = request.speaker || 'lalitha';
   
   try {
+    // No timeout - let it take as long as needed
     const response = await axios.post(
       `${TTS_SERVICE_URL}/generate`,
       {
@@ -159,7 +157,6 @@ export async function generateTeluguTTS(request: TTSRequest): Promise<TTSBinaryR
         speaker
       },
       {
-        timeout: 15000,
         headers: {
           'Content-Type': 'application/json',
           'Connection': 'keep-alive',
@@ -178,9 +175,9 @@ export async function generateTeluguTTS(request: TTSRequest): Promise<TTSBinaryR
       format: 'wav',
     };
   } catch (error: any) {
-    if (error.code === 'ECONNABORTED') {
-      console.error('TTS service timeout - taking too long');
-      throw new Error('TTS service timeout');
+    if (error.code === 'ECONNREFUSED') {
+      console.error('TTS service connection refused');
+      throw new Error('TTS service unavailable');
     }
     console.error('Error calling TTS service:', error.message);
     throw new Error('Failed to generate speech audio');
@@ -192,9 +189,8 @@ export async function generateTeluguTTS(request: TTSRequest): Promise<TTSBinaryR
  */
 export async function getTeluguSpeakers(): Promise<{ speakers: Record<string, string> }> {
   try {
-    const response = await axios.get(`${TTS_SERVICE_URL}/speakers`, {
-      timeout: 5000,
-    });
+    // No timeout - let it take as long as needed
+    const response = await axios.get(`${TTS_SERVICE_URL}/speakers`);
     return response.data;
   } catch (error: any) {
     console.error('Error getting speakers:', error.message);
