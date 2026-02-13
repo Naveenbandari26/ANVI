@@ -5,16 +5,21 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../config/api';
 import Constants from 'expo-constants';
+import { emitIncomingCall } from '../events/incomingCallEvents';
+import { showFullScreenCallNotification } from '../services/fullScreenCallNotification';
 
 Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-        shouldShowAlert: true,
-        shouldPlaySound: true,
-        shouldSetBadge: false,
-        // Properties required for newer SDKs (53+)
-        shouldShowBanner: true,
-        shouldShowList: true,
-    }),
+    handleNotification: async (notification) => {
+        const data = notification.request.content.data;
+        const isIncomingCall = data?.type === 'INCOMING_CALL';
+        return {
+            shouldShowAlert: !isIncomingCall,
+            shouldPlaySound: true,
+            shouldSetBadge: false,
+            shouldShowBanner: !isIncomingCall,
+            shouldShowList: !isIncomingCall,
+        };
+    },
 });
 
 // Define notification categories
@@ -37,32 +42,59 @@ export const usePushNotifications = () => {
     const responseListener = useRef<Notifications.Subscription>(null);
 
     useEffect(() => {
-        registerForPushNotificationsAsync().then(token => {
-            setExpoPushToken(token);
-            if (token) {
-                updatePushTokenOnServer(token);
-            }
-        });
-
-        notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
-            console.log('Notification received:', notification);
-        });
-
-        responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
-            const { actionIdentifier, notification } = response;
-            const callId = notification.request.content.data.callId;
-
-            if (actionIdentifier === 'accept') {
-                // The app will foreground itself because of opensAppToForeground: true
-                // The CallOverlay will handle showing the call screen
-                console.log('User accepted call from notification');
-            } else if (actionIdentifier === 'decline') {
-                // Handle decline logic (e.g., call API to decline)
-                if (callId) {
-                    api.post(`/v1/calls/${callId}/decline`).catch(console.error);
+        try {
+            registerForPushNotificationsAsync().then(token => {
+                setExpoPushToken(token);
+                if (token) {
+                    updatePushTokenOnServer(token);
                 }
-            }
-        });
+            }).catch(error => {
+                console.error('Error registering for push notifications:', error);
+            });
+
+            notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
+                const data = notification.request.content.data;
+                if (data?.type === 'INCOMING_CALL' && data?.callId) {
+                    emitIncomingCall({
+                        callId: data.callId,
+                        scheduledTime: data.scheduledTime || new Date().toISOString(),
+                    });
+                    if (Platform.OS === 'android') {
+                        showFullScreenCallNotification(data.callId);
+                    }
+                }
+            });
+
+            responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
+                try {
+                    const { actionIdentifier, notification } = response;
+                    const data = notification.request.content.data;
+                    const callId = data?.callId;
+
+                    if (data?.type === 'INCOMING_CALL' && callId) {
+                        // User opened app from notification - show full-screen call UI
+                        emitIncomingCall({
+                            callId,
+                            scheduledTime: data.scheduledTime || new Date().toISOString(),
+                        });
+                    }
+
+                    if (actionIdentifier === 'accept') {
+                        // The app will foreground itself because of opensAppToForeground: true
+                        // CallOverlay will show and user can tap Accept there, or we could auto-accept after delay
+                        console.log('User accepted call from notification');
+                    } else if (actionIdentifier === 'decline') {
+                        if (callId) {
+                            api.post(`/calls/${callId}/decline`).catch(console.error);
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error handling notification response:', error);
+                }
+            });
+        } catch (error) {
+            console.error('Error setting up push notifications:', error);
+        }
 
         return () => {
             if (notificationListener.current) {

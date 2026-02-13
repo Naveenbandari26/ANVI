@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { callService } from '../services/call.service';
 import { initializeSocket, getSocket } from '../config/socket';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { scheduleIncomingCallNotification } from './usePushNotifications';
+import { addIncomingCallListener } from '../events/incomingCallEvents';
+import { cancelCallNotification } from '../services/fullScreenCallNotification';
 import {
   initializeCallKeep,
   displayIncomingCall,
@@ -24,9 +25,29 @@ export const useCallManager = () => {
   const [activeConversation, setActiveConversation] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [useNativeOverlay, setUseNativeOverlay] = useState(false);
+  /** When true, native overlay was tried but failed - show in-app modal instead */
+  const [nativeOverlayFailed, setNativeOverlayFailed] = useState(false);
 
   useEffect(() => {
     let mounted = true;
+
+        const handleIncomingCall = async (data: IncomingCall) => {
+      if (!mounted) return;
+      setIncomingCall(data);
+      setNativeOverlayFailed(false);
+
+      if (useNativeOverlay) {
+        const displayed = await displayIncomingCall(data.callId, 'ANVI');
+        if (displayed) {
+          return;
+        }
+        setNativeOverlayFailed(true);
+      }
+    };
+
+    const unsubscribePush = addIncomingCallListener(handleIncomingCall);
+
+    let socketCleanup: (() => void) | null = null;
 
     const setupSocket = async () => {
       try {
@@ -38,55 +59,29 @@ export const useCallManager = () => {
         // Check for any currently ringing calls for this user
         const ringingCalls = await callService.getUserCalls('ringing');
         if (mounted && ringingCalls.length > 0) {
-          // Only show calls that are very recent (less than 2 minutes old)
           const latestCall = ringingCalls[0];
           const scheduledDate = new Date(latestCall.scheduledTime);
           const now = new Date();
-          const AgeInMinutes = (now.getTime() - scheduledDate.getTime()) / 60000;
+          const ageInMinutes = (now.getTime() - scheduledDate.getTime()) / 60000;
 
-          if (AgeInMinutes < 2) {
+          if (ageInMinutes < 2) {
             const callData = {
               callId: latestCall._id,
               scheduledTime: latestCall.scheduledTime,
             };
             setIncomingCall(callData);
-            
-            // Display native overlay if available
             if (useNativeOverlay) {
-              await displayIncomingCall(callData.callId, 'ANVI');
+              const displayed = await displayIncomingCall(callData.callId, 'ANVI');
+              if (!displayed && mounted) setNativeOverlayFailed(true);
             }
           }
         }
-
-        const handleIncomingCall = async (data: IncomingCall) => {
-          if (mounted) {
-            setIncomingCall(data);
-            
-            // Display native overlay if available (works even when app is in background)
-            if (useNativeOverlay) {
-              const displayed = await displayIncomingCall(data.callId, 'ANVI');
-              if (displayed) {
-                // Native overlay handles the UI, we still show notification as backup
-                scheduleIncomingCallNotification(data.callId);
-                return; // Don't show React Native modal if native overlay is shown
-              }
-            }
-            
-            // Fallback: Show React Native modal and notification
-            scheduleIncomingCallNotification(data.callId);
-          }
-        };
 
         const socket = getSocket();
         if (socket) {
           socket.on('incoming_call', handleIncomingCall);
+          socketCleanup = () => socket.off('incoming_call', handleIncomingCall);
         }
-
-        return () => {
-          if (socket) {
-            socket.off('incoming_call', handleIncomingCall);
-          }
-        };
       } catch (error) {
         console.error('Error setting up socket and initial call check:', error);
       }
@@ -96,6 +91,8 @@ export const useCallManager = () => {
 
     return () => {
       mounted = false;
+      socketCleanup?.();
+      unsubscribePush();
     };
   }, [useNativeOverlay]);
 
@@ -112,6 +109,7 @@ export const useCallManager = () => {
       setActiveCall(callId);
       setActiveConversation(result.conversation._id);
       setIncomingCall(null);
+      cancelCallNotification(callId).catch(() => {});
 
       // Notify server and join call room
       const socket = getSocket();
@@ -138,6 +136,7 @@ export const useCallManager = () => {
 
       await callService.declineCall(callId);
       setIncomingCall(null);
+      cancelCallNotification(callId).catch(() => {});
 
       const socket = getSocket();
       const userId = await AsyncStorage.getItem('userId');
@@ -172,42 +171,30 @@ export const useCallManager = () => {
     }
   }, [isProcessing, useNativeOverlay]);
 
-  // Initialize native call overlay after callbacks are defined
+  // Native CallKeep disabled to prevent startup crash (native module can conflict).
+  // In-app full-screen modal is used for all incoming calls.
+  // To re-enable native overlay later: uncomment the useEffect below and ensure newArchEnabled: false.
+  /*
   useEffect(() => {
     const initNativeCalls = async () => {
       const initialized = await initializeCallKeep();
       setUseNativeOverlay(initialized);
-      
       if (initialized) {
-        // Set up native call event listeners
         const cleanup = setupCallKeepListeners({
-          onAnswerCallAction: async (callId: string) => {
-            console.log('Native call answered:', callId);
-            await acceptCall(callId);
-          },
+          onAnswerCallAction: async (callId: string) => { await acceptCall(callId); },
           onEndCallAction: async (callId: string) => {
-            console.log('Native call ended:', callId);
-            if (activeCall === callId) {
-              await endCall(callId);
-            } else {
-              await declineCall(callId);
-            }
+            if (activeCall === callId) await endCall(callId);
+            else await declineCall(callId);
           },
-          onRejectCallAction: async (callId: string) => {
-            console.log('Native call rejected:', callId);
-            await declineCall(callId);
-          },
+          onRejectCallAction: async (callId: string) => { await declineCall(callId); },
         });
-        
         return cleanup;
       }
     };
-
     const cleanupPromise = initNativeCalls();
-    return () => {
-      cleanupPromise.then(cleanup => cleanup && cleanup());
-    };
+    return () => { cleanupPromise.then(cleanup => cleanup && cleanup()); };
   }, [acceptCall, declineCall, endCall, activeCall]);
+  */
 
   return {
     incomingCall,
@@ -216,6 +203,7 @@ export const useCallManager = () => {
     acceptCall,
     declineCall,
     endCall,
-    useNativeOverlay, // Expose this so UI can conditionally render
+    useNativeOverlay,
+    nativeOverlayFailed,
   };
 };

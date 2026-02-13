@@ -1,0 +1,77 @@
+// Read environment variables from .env file if available
+// In Expo, process.env is populated from .env files automatically during build
+module.exports = {
+  expo: {
+    name: "client",
+    slug: "client",
+    version: "1.0.0",
+    orientation: "portrait",
+    icon: "./assets/images/icon.png",
+    scheme: "client",
+    userInterfaceStyle: "automatic",
+    newArchEnabled: false,
+    ios: {
+      supportsTablet: true
+    },
+    android: {
+      adaptiveIcon: {
+        backgroundColor: "#E6F4FE",
+        foregroundImage: "./assets/images/android-icon-foreground.png",
+        backgroundImage: "./assets/images/android-icon-background.png",
+        monochromeImage: "./assets/images/android-icon-monochrome.png"
+      },
+      edgeToEdgeEnabled: true,
+      predictiveBackGestureEnabled: false,
+      permissions: [
+        "INTERNET",
+        "RECEIVE_BOOT_COMPLETED",
+        "WAKE_LOCK",
+        "VIBRATE",
+        "USE_FULL_SCREEN_INTENT",
+        "SYSTEM_ALERT_WINDOW",
+        "android.permission.RECORD_AUDIO"
+      ],
+      notifications: {
+        icon: "./assets/images/icon.png",
+        color: "#6366f1"
+      },
+      package: "com.naveenbandari.client"
+    },
+    web: {
+      output: "static",
+      favicon: "./assets/images/favicon.png"
+    },
+    plugins: [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          image: "./assets/images/splash-icon.png",
+          imageWidth: 200,
+          resizeMode: "contain",
+          backgroundColor: "#ffffff",
+          dark: {
+            backgroundColor: "#000000"
+          }
+        }
+      ],
+      "expo-notifications",
+      [
+        "@react-native-voice/voice",
+        {
+          microphonePermission: "Allow ANVI to listen to your voice.",
+          speechRecognitionPermission: "Allow ANVI to process your speech."
+        }
+      ]
+    ],
+    experiments: {
+      typedRoutes: true,
+      reactCompiler: true
+    },
+    extra: {
+      // Embed environment variables so they're available in production builds
+      EXPO_PUBLIC_API_URL: process.env.EXPO_PUBLIC_API_URL || "https://server-production-b9b1.up.railway.app",
+      EXPO_PUBLIC_SOCKET_URL: process.env.EXPO_PUBLIC_SOCKET_URL || "https://server-production-b9b1.up.railway.app",
+    }
+  }
+};

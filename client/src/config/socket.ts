@@ -6,7 +6,11 @@ import Constants from 'expo-constants';
 // Extract IP address from Expo dev server URL (e.g., "192.168.1.42:8081" -> "192.168.1.42")
 const getExpoDevServerIP = (): string | null => {
   try {
-    const hostUri = Constants.expoConfig?.hostUri;
+    // In production builds, Constants.expoConfig might be undefined
+    if (!Constants || !Constants.expoConfig) {
+      return null;
+    }
+    const hostUri = Constants.expoConfig.hostUri;
     if (hostUri) {
       const ip = hostUri.split(':')[0];
       if (ip && ip !== 'localhost' && ip !== '127.0.0.1' && !ip.includes('10.0.2.2')) {
@@ -14,7 +18,8 @@ const getExpoDevServerIP = (): string | null => {
       }
     }
   } catch (error) {
-    // Ignore errors
+    // Ignore errors - this is expected in production builds
+    console.log('Could not get Expo dev server IP (normal in production):', error);
   }
   return null;
 };
@@ -45,18 +50,47 @@ const getSocketUrl = () => {
     return cleanUrl;
   };
   
-  // Priority 1: Use socket URL environment variable if set
-  const socketUrl = process.env.EXPO_PUBLIC_SOCKET_URL;
-  if (socketUrl && socketUrl.trim()) {
-    console.log(`🔌 Using EXPO_PUBLIC_SOCKET_URL: ${socketUrl}`);
-    return normalizeUrl(socketUrl.trim());
+  // Priority 1: Use socket URL from Constants.expoConfig.extra (works in production)
+  // or process.env (works in development)
+  try {
+    let socketUrl: string | undefined;
+    
+    // Try Constants.expoConfig.extra first (for production builds)
+    if (Constants?.expoConfig?.extra?.EXPO_PUBLIC_SOCKET_URL) {
+      socketUrl = Constants.expoConfig.extra.EXPO_PUBLIC_SOCKET_URL;
+    }
+    // Fall back to process.env (for development)
+    else if (process.env?.EXPO_PUBLIC_SOCKET_URL) {
+      socketUrl = process.env.EXPO_PUBLIC_SOCKET_URL;
+    }
+    
+    if (socketUrl && typeof socketUrl === 'string' && socketUrl.trim()) {
+      console.log(`🔌 Using EXPO_PUBLIC_SOCKET_URL: ${socketUrl}`);
+      return normalizeUrl(socketUrl.trim());
+    }
+  } catch (error) {
+    console.warn('Error reading EXPO_PUBLIC_SOCKET_URL:', error);
   }
   
   // Priority 2: Fall back to API URL environment variable if set
-  const apiUrl = process.env.EXPO_PUBLIC_API_URL;
-  if (apiUrl && apiUrl.trim()) {
-    console.log(`🔌 Using EXPO_PUBLIC_API_URL for socket: ${apiUrl}`);
-    return normalizeUrl(apiUrl.trim());
+  try {
+    let apiUrl: string | undefined;
+    
+    // Try Constants.expoConfig.extra first (for production builds)
+    if (Constants?.expoConfig?.extra?.EXPO_PUBLIC_API_URL) {
+      apiUrl = Constants.expoConfig.extra.EXPO_PUBLIC_API_URL;
+    }
+    // Fall back to process.env (for development)
+    else if (process.env?.EXPO_PUBLIC_API_URL) {
+      apiUrl = process.env.EXPO_PUBLIC_API_URL;
+    }
+    
+    if (apiUrl && typeof apiUrl === 'string' && apiUrl.trim()) {
+      console.log(`🔌 Using EXPO_PUBLIC_API_URL for socket: ${apiUrl}`);
+      return normalizeUrl(apiUrl.trim());
+    }
+  } catch (error) {
+    console.warn('Error reading EXPO_PUBLIC_API_URL:', error);
   }
   
   // Priority 3: For development - try to auto-detect Expo dev server IP
@@ -84,7 +118,8 @@ const getSocketUrl = () => {
     if (expoIP) {
       return `http://${expoIP}:5000`;
     }
-    // Android emulator uses special IP
+    // Android emulator uses special IP (only works in emulator, not on real device)
+    // For production builds on real devices, this will fail - use environment variables instead
     return 'http://10.0.2.2:5000';
   }
   
@@ -92,14 +127,28 @@ const getSocketUrl = () => {
   return 'http://localhost:5000';
 };
 
-const SOCKET_URL = getSocketUrl();
+// Safely get socket URL with error handling
+let SOCKET_URL: string;
+try {
+  SOCKET_URL = getSocketUrl();
+} catch (error) {
+  console.error('Error determining socket URL:', error);
+  // Fallback to production URL if available, otherwise use a safe default
+  SOCKET_URL = 'https://server-production-b9b1.up.railway.app';
+}
 
-// Debug logging
-console.log('🔌 Socket Configuration:');
-console.log('   Platform:', Platform.OS);
-console.log('   Socket URL:', SOCKET_URL);
-console.log('   EXPO_PUBLIC_SOCKET_URL:', process.env.EXPO_PUBLIC_SOCKET_URL || 'not set');
-console.log('   Expo Dev Server IP:', getExpoDevServerIP() || 'not detected');
+// Debug logging (only in development)
+if (__DEV__) {
+  console.log('🔌 Socket Configuration:');
+  console.log('   Platform:', Platform.OS);
+  console.log('   Socket URL:', SOCKET_URL);
+  try {
+    console.log('   EXPO_PUBLIC_SOCKET_URL:', process.env?.EXPO_PUBLIC_SOCKET_URL || 'not set');
+  } catch (e) {
+    console.log('   EXPO_PUBLIC_SOCKET_URL: not accessible');
+  }
+  console.log('   Expo Dev Server IP:', getExpoDevServerIP() || 'not detected');
+}
 
 let socket: Socket | null = null;
 
@@ -108,32 +157,57 @@ export const initializeSocket = async (): Promise<Socket> => {
     return socket;
   }
 
-  const token = await AsyncStorage.getItem('authToken');
-  const userId = await AsyncStorage.getItem('userId');
+  try {
+    let token: string | null = null;
+    let userId: string | null = null;
 
-  socket = io(SOCKET_URL, {
-    transports: ['websocket', 'polling'],
-    auth: {
-      token,
-    },
-  });
-
-  socket.on('connect', () => {
-    console.log('🔌 Connected to server');
-    if (userId) {
-      socket?.emit('join_user_room', userId);
+    try {
+      token = await AsyncStorage.getItem('authToken');
+      userId = await AsyncStorage.getItem('userId');
+    } catch (storageError) {
+      console.warn('Error reading from AsyncStorage (continuing without auth):', storageError);
+      // Continue without token - socket will still connect, just won't be authenticated
     }
-  });
 
-  socket.on('disconnect', () => {
-    console.log('🔌 Disconnected from server');
-  });
+    socket = io(SOCKET_URL, {
+      transports: ['websocket', 'polling'],
+      auth: {
+        token: token || undefined,
+      },
+      // Add timeout and retry options for production
+      timeout: 20000,
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+    });
 
-  socket.on('connect_error', (error) => {
-    console.error('Socket connection error:', error);
-  });
+    socket.on('connect', () => {
+      console.log('🔌 Connected to server');
+      if (userId) {
+        try {
+          socket?.emit('join_user_room', userId);
+        } catch (error) {
+          console.warn('Error joining user room:', error);
+        }
+      }
+    });
 
-  return socket;
+    socket.on('disconnect', () => {
+      console.log('🔌 Disconnected from server');
+    });
+
+    socket.on('connect_error', (error) => {
+      console.error('Socket connection error:', error);
+      // Don't throw - let the app continue even if socket fails
+    });
+
+    return socket;
+  } catch (error) {
+    console.error('Error initializing socket:', error);
+    // Return a dummy socket object to prevent crashes
+    // The app can continue without socket functionality
+    throw error;
+  }
 };
 
 export const getSocket = (): Socket | null => {

@@ -7,7 +7,7 @@
     "icon": "./assets/images/icon.png",
     "scheme": "client",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "ios": {
       "supportsTablet": true
     },
@@ -21,12 +21,7 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "permissions": [
-        "RECEIVE_BOOT_COMPLETED",
-        "WAKE_LOCK",
-        "VIBRATE",
-        "USE_FULL_SCREEN_INTENT",
-        "SYSTEM_ALERT_WINDOW",
-        "android.permission.RECORD_AUDIO",
+        "INTERNET",
         "RECEIVE_BOOT_COMPLETED",
         "WAKE_LOCK",
         "VIBRATE",

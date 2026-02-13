@@ -13,14 +13,17 @@ export const CallOverlay: React.FC = () => {
         declineCall,
         endCall,
         useNativeOverlay,
+        nativeOverlayFailed,
     } = useCallManager();
+
+    const showIncomingCallModal = incomingCall && (!useNativeOverlay || nativeOverlayFailed);
 
     return (
         <View style={styles.container} pointerEvents="box-none">
-            {/* Incoming Call Modal - Only show if native overlay is not available */}
-            {incomingCall && !useNativeOverlay && (
+            {/* Incoming Call Modal - full screen when socket or push triggers incoming call */}
+            {showIncomingCallModal && (
                 <IncomingCallModal
-                    visible={!!incomingCall}
+                    visible={true}
                     callId={incomingCall.callId}
                     onAccept={() => acceptCall(incomingCall.callId)}
                     onDecline={() => declineCall(incomingCall.callId)}

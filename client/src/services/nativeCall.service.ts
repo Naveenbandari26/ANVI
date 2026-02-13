@@ -1,11 +1,23 @@
-import RNCallKeep from 'react-native-callkeep';
 import { Platform } from 'react-native';
 import { callService } from './call.service';
 
-// Check if native module is available
+// Lazy-load CallKeep only when first needed so native module is not loaded at app startup
+let RNCallKeep: any = undefined;
+
+function getCallKeep(): any {
+  if (RNCallKeep !== undefined) return RNCallKeep;
+  try {
+    RNCallKeep = require('react-native-callkeep').default;
+  } catch (_) {
+    RNCallKeep = null;
+  }
+  return RNCallKeep;
+}
+
 const isCallKeepAvailable = () => {
   try {
-    return !!RNCallKeep && typeof RNCallKeep.setup === 'function';
+    const CK = getCallKeep();
+    return !!CK && typeof CK.setup === 'function';
   } catch {
     return false;
   }

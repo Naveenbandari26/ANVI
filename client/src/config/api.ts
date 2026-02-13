@@ -6,9 +6,13 @@ import Constants from 'expo-constants';
 // Extract IP address from Expo dev server URL (e.g., "192.168.1.42:8081" -> "192.168.1.42")
 const getExpoDevServerIP = (): string | null => {
   try {
+    // In production builds, Constants.expoConfig might be undefined
+    if (!Constants || !Constants.expoConfig) {
+      return null;
+    }
     // Try to get the host from Expo Constants
     // hostUri is available when running in Expo Go or development build
-    const hostUri = Constants.expoConfig?.hostUri;
+    const hostUri = Constants.expoConfig.hostUri;
     if (hostUri) {
       // hostUri format: "192.168.1.42:8081" or "192.168.1.42"
       const ip = hostUri.split(':')[0];
@@ -18,7 +22,8 @@ const getExpoDevServerIP = (): string | null => {
       }
     }
   } catch (error) {
-    // Ignore errors
+    // Ignore errors - this is expected in production builds
+    console.log('Could not get Expo dev server IP (normal in production):', error);
   }
   return null;
 };
@@ -49,11 +54,26 @@ const getApiBaseUrl = () => {
     return cleanUrl;
   };
   
-  // Priority 1: Use environment variable if set (for production or explicit config)
-  const envUrl = process.env.EXPO_PUBLIC_API_URL;
-  if (envUrl && envUrl.trim()) {
-    console.log(`📡 Using EXPO_PUBLIC_API_URL: ${envUrl}`);
-    return normalizeUrl(envUrl.trim());
+  // Priority 1: Use environment variable from Constants.expoConfig.extra (works in production)
+  // or process.env (works in development)
+  try {
+    let envUrl: string | undefined;
+    
+    // Try Constants.expoConfig.extra first (for production builds)
+    if (Constants?.expoConfig?.extra?.EXPO_PUBLIC_API_URL) {
+      envUrl = Constants.expoConfig.extra.EXPO_PUBLIC_API_URL;
+    }
+    // Fall back to process.env (for development)
+    else if (process.env?.EXPO_PUBLIC_API_URL) {
+      envUrl = process.env.EXPO_PUBLIC_API_URL;
+    }
+    
+    if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
+      console.log(`📡 Using EXPO_PUBLIC_API_URL: ${envUrl}`);
+      return normalizeUrl(envUrl.trim());
+    }
+  } catch (error) {
+    console.warn('Error reading EXPO_PUBLIC_API_URL:', error);
   }
   
   // Priority 2: For development - try to auto-detect Expo dev server IP
@@ -84,6 +104,7 @@ const getApiBaseUrl = () => {
       return `http://${expoIP}:5000`;
     }
     // Android emulator uses special IP to access host machine
+    // For production builds on real devices, this will fail - use environment variables instead
     return 'http://10.0.2.2:5000';
   }
   
@@ -91,15 +112,29 @@ const getApiBaseUrl = () => {
   return 'http://localhost:5000';
 };
 
-const API_BASE_URL = getApiBaseUrl();
+// Safely get API base URL with error handling
+let API_BASE_URL: string;
+try {
+  API_BASE_URL = getApiBaseUrl();
+} catch (error) {
+  console.error('Error determining API base URL:', error);
+  // Fallback to production URL if available, otherwise use a safe default
+  API_BASE_URL = 'https://server-production-b9b1.up.railway.app';
+}
 
-// Debug logging
-console.log('📡 API Configuration:');
-console.log('   Platform:', Platform.OS);
-console.log('   API Base URL:', API_BASE_URL);
-console.log('   Full API URL:', `${API_BASE_URL}/api/v1`);
-console.log('   EXPO_PUBLIC_API_URL:', process.env.EXPO_PUBLIC_API_URL || 'not set');
-console.log('   Expo Dev Server IP:', getExpoDevServerIP() || 'not detected');
+// Debug logging (only in development)
+if (__DEV__) {
+  console.log('📡 API Configuration:');
+  console.log('   Platform:', Platform.OS);
+  console.log('   API Base URL:', API_BASE_URL);
+  console.log('   Full API URL:', `${API_BASE_URL}/api/v1`);
+  try {
+    console.log('   EXPO_PUBLIC_API_URL:', process.env?.EXPO_PUBLIC_API_URL || 'not set');
+  } catch (e) {
+    console.log('   EXPO_PUBLIC_API_URL: not accessible');
+  }
+  console.log('   Expo Dev Server IP:', getExpoDevServerIP() || 'not detected');
+}
 
 export const api = axios.create({
   baseURL: `${API_BASE_URL}/api/v1`,

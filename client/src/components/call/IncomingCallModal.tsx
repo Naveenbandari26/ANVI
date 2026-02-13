@@ -112,6 +112,8 @@ export const IncomingCallModal: React.FC<IncomingCallModalProps> = ({
       transparent={false}
       animationType="fade"
       statusBarTranslucent
+      presentationStyle="fullScreen"
+      onRequestClose={onDecline}
     >
       <View style={styles.container}>
         <View style={styles.content}>
