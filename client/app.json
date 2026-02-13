@@ -25,12 +25,20 @@
         "WAKE_LOCK",
         "VIBRATE",
         "USE_FULL_SCREEN_INTENT",
-        "SYSTEM_ALERT_WINDOW"
+        "SYSTEM_ALERT_WINDOW",
+        "android.permission.RECORD_AUDIO",
+        "RECEIVE_BOOT_COMPLETED",
+        "WAKE_LOCK",
+        "VIBRATE",
+        "USE_FULL_SCREEN_INTENT",
+        "SYSTEM_ALERT_WINDOW",
+        "android.permission.RECORD_AUDIO"
       ],
       "notifications": {
         "icon": "./assets/images/icon.png",
         "color": "#6366f1"
-      }
+      },
+      "package": "com.naveenbandari.client"
     },
     "web": {
       "output": "static",
