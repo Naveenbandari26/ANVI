@@ -22,70 +22,69 @@ const getExpoDevServerIP = (): string | null => {
 // Determine Socket URL based on platform and environment
 // Socket URL should match API URL (same server, same port)
 const getSocketUrl = () => {
-  // For web platform, ALWAYS use localhost:5000 (ignore env vars)
+  // Helper: Normalize URL - only add port for HTTP localhost/dev URLs
+  const normalizeUrl = (url: string): string => {
+    // Remove trailing slash
+    const cleanUrl = url.endsWith('/') ? url.slice(0, -1) : url;
+    
+    // For HTTPS URLs or production URLs, don't modify port
+    if (cleanUrl.includes('https://')) {
+      return cleanUrl;
+    }
+    
+    // For HTTP URLs, handle port normalization
+    if (cleanUrl.includes(':3000')) {
+      return cleanUrl.replace(':3000', ':5000');
+    }
+    
+    // Only add :5000 for HTTP URLs without a port (dev/localhost scenarios)
+    if (cleanUrl.startsWith('http://') && !cleanUrl.match(/:\d+/)) {
+      return `${cleanUrl}:5000`;
+    }
+    
+    return cleanUrl;
+  };
+  
+  // Priority 1: Use socket URL environment variable if set
+  const socketUrl = process.env.EXPO_PUBLIC_SOCKET_URL;
+  if (socketUrl && socketUrl.trim()) {
+    console.log(`🔌 Using EXPO_PUBLIC_SOCKET_URL: ${socketUrl}`);
+    return normalizeUrl(socketUrl.trim());
+  }
+  
+  // Priority 2: Fall back to API URL environment variable if set
+  const apiUrl = process.env.EXPO_PUBLIC_API_URL;
+  if (apiUrl && apiUrl.trim()) {
+    console.log(`🔌 Using EXPO_PUBLIC_API_URL for socket: ${apiUrl}`);
+    return normalizeUrl(apiUrl.trim());
+  }
+  
+  // Priority 3: For development - try to auto-detect Expo dev server IP
+  const expoIP = getExpoDevServerIP();
+  
+  // For web platform
   if (Platform.OS === 'web') {
+    // If no env var, use localhost for web development
     return 'http://localhost:5000';
   }
   
-  // Helper: Check if URL looks like a physical device IP
-  const isPhysicalDeviceUrl = (url: string): boolean => {
-    return !url.includes('localhost') && 
-           !url.includes('127.0.0.1') && 
-           !url.includes('10.0.2.2') &&
-           (url.includes('http://') || url.includes('https://'));
-  };
-  
-  // Helper: Normalize URL to use port 5000
-  const normalizePort = (url: string): string => {
-    if (url.includes(':3000')) {
-      return url.replace(':3000', ':5000');
-    }
-    if (!url.includes(':5000') && !url.includes(':3000')) {
-      return url.endsWith('/') ? `${url.slice(0, -1)}:5000` : `${url}:5000`;
-    }
-    return url;
-  };
-  
-  // Try to auto-detect Expo dev server IP
-  const expoIP = getExpoDevServerIP();
-  
   // For iOS
   if (Platform.OS === 'ios') {
-    // Priority 1: Use auto-detected Expo dev server IP (most reliable)
+    // Use auto-detected Expo dev server IP if available
     if (expoIP) {
       return `http://${expoIP}:5000`;
     }
-    // Priority 2: Use socket URL env var
-    const socketUrl = process.env.EXPO_PUBLIC_SOCKET_URL;
-    if (socketUrl && isPhysicalDeviceUrl(socketUrl)) {
-      return normalizePort(socketUrl);
-    }
-    // Priority 3: Use API URL env var
-    const apiUrl = process.env.EXPO_PUBLIC_API_URL;
-    if (apiUrl && isPhysicalDeviceUrl(apiUrl)) {
-      return normalizePort(apiUrl);
-    }
-    // Priority 4: iOS simulator uses localhost
+    // iOS simulator uses localhost
     return 'http://localhost:5000';
   }
   
   // For Android
   if (Platform.OS === 'android') {
-    // Priority 1: Use auto-detected Expo dev server IP (most reliable)
+    // Use auto-detected Expo dev server IP if available
     if (expoIP) {
       return `http://${expoIP}:5000`;
     }
-    // Priority 2: Use socket URL env var
-    const socketUrl = process.env.EXPO_PUBLIC_SOCKET_URL;
-    if (socketUrl && isPhysicalDeviceUrl(socketUrl)) {
-      return normalizePort(socketUrl);
-    }
-    // Priority 3: Use API URL env var
-    const apiUrl = process.env.EXPO_PUBLIC_API_URL;
-    if (apiUrl && isPhysicalDeviceUrl(apiUrl)) {
-      return normalizePort(apiUrl);
-    }
-    // Priority 4: Android emulator uses special IP
+    // Android emulator uses special IP
     return 'http://10.0.2.2:5000';
   }
   
