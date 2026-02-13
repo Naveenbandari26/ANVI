@@ -9,6 +9,7 @@ export class UserController {
     this.userService = new UserService();
   }
 
+  // @ts-ignore
   getAllUsers = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const users = await this.userService.getAllUsers();

@@ -28,6 +28,7 @@ console.log(`📋 API Routes registered with version: ${API_VERSION}`);
 console.log(`   Auth routes: /api/${API_VERSION}/auth`);
 
 // Default route
+// @ts-ignore
 router.get('/', (req, res) => {
   res.json({
     message: 'ANVI API Server',

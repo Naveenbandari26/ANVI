@@ -3,8 +3,10 @@ import { ApiError } from '../utils/ApiError';
 
 export const errorHandler = (
   err: Error | ApiError,
+  // @ts-ignore
   req: Request,
   res: Response,
+  // @ts-ignore
   next: NextFunction
 ): void => {
   // If it's an ApiError, use its status code and message

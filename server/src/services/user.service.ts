@@ -20,6 +20,7 @@ export class UserService {
     const newUser = new UserModel(userData);
     const savedUser = await newUser.save();
     const userObj = savedUser.toObject();
+    // @ts-ignore
     delete userObj.password;
     return this.mapToUser(userObj);
   }

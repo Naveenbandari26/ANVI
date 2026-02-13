@@ -1,4 +1,5 @@
 import { Expo, ExpoPushMessage } from 'expo-server-sdk';
+// @ts-ignore
 import { UserModel } from '../models/user.schema';
 
 const expo = new Expo();

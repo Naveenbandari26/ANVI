@@ -16,6 +16,14 @@ import { Audio } from 'expo-av';
 import { conversationService } from '../../services/conversation.service';
 import { callService } from '../../services/call.service';
 import { useNativeSTT } from '../../hooks/useNativeSTT';
+import {
+  initializeTTS,
+  speakText,
+  stopSpeaking,
+  checkTeluguSupport,
+  showTeluguInstallPrompt,
+  NativeTTSSupport,
+} from '../../services/native-tts.service';
 
 interface ActiveCallScreenProps {
   callId: string;
@@ -36,6 +44,7 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
   const [hasReceivedInitialGreeting, setHasReceivedInitialGreeting] = useState(false);
   const [isEndingCall, setIsEndingCall] = useState(false);
   const [endingStep, setEndingStep] = useState<string>('');
+  const [ttsSupport, setTtsSupport] = useState<NativeTTSSupport | null>(null);
   const scrollViewRef = useRef<ScrollView>(null);
   const soundRef = useRef<Audio.Sound | null>(null);
   const hasReceivedGreetingRef = useRef(false); // Track greeting to avoid re-triggering
@@ -64,9 +73,44 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
 
   const { isListening, partialResult, error: sttError, startListening, stopListening } = useNativeSTT(handleSpeechResult);
 
+  // Initialize TTS on mount
+  useEffect(() => {
+    let mounted = true;
+
+    const initTTS = async () => {
+      try {
+        const support = await initializeTTS();
+        if (mounted) {
+          setTtsSupport(support);
+          
+          if (!support.isSupported) {
+            console.warn('⚠️ Telugu TTS not available - will use server-side TTS fallback');
+            // Optionally show prompt to user (can be disabled if too intrusive)
+            // showTeluguInstallPrompt();
+          }
+        }
+      } catch (error) {
+        console.error('Error initializing TTS:', error);
+        if (mounted) {
+          setTtsSupport({ isSupported: false, availableVoices: [] });
+        }
+      }
+    };
+
+    initTTS();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   // Clean up audio on unmount
   useEffect(() => {
     return () => {
+      // Stop native TTS
+      stopSpeaking().catch(() => {});
+      
+      // Stop expo-av audio
       if (soundRef.current) {
         soundRef.current.unloadAsync().catch(() => { });
         soundRef.current = null;
@@ -74,15 +118,72 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
     };
   }, []);
 
-  // Play TTS audio
+  // Play TTS audio using native TTS if Telugu is available, otherwise fallback to server audio
   const playTTSAudio = async (text: string, audioData?: string, isInitialGreeting: boolean = false) => {
     try {
-      // If no audio data provided, skip playback and wait for server to send audio via socket
-      if (!audioData) {
-        console.log('⏳ No audio data provided, waiting for server to generate TTS...');
-        return;
-      }
+      // Check if native Telugu TTS is available
+      const useNativeTTS = ttsSupport?.isSupported ?? false;
 
+      if (useNativeTTS) {
+        // Use native TTS
+        console.log('🔊 Using native Telugu TTS');
+        setIsPlayingTTS(true);
+
+        // Stop any currently playing audio (expo-av)
+        if (soundRef.current) {
+          await soundRef.current.unloadAsync();
+          soundRef.current = null;
+        }
+
+        // Stop any native TTS that might be playing
+        await stopSpeaking();
+
+        // Speak using native TTS
+        await speakText(text, {
+          language: 'te-IN',
+          onStart: () => {
+            setIsPlayingTTS(true);
+          },
+          onFinish: () => {
+            setIsPlayingTTS(false);
+
+            // Only start listening automatically after greeting is received
+            // This ensures user can only respond after hearing the greeting
+            if (hasReceivedInitialGreeting) {
+              startListening();
+            }
+          },
+          onError: (error) => {
+            console.error('Native TTS error:', error);
+            setIsPlayingTTS(false);
+            
+            // Fallback to server audio if available
+            if (audioData) {
+              console.log('🔄 Falling back to server-side TTS');
+              playServerAudio(text, audioData, isInitialGreeting);
+            }
+          },
+        });
+      } else {
+        // Fallback to server-side audio playback
+        if (!audioData) {
+          console.log('⏳ No audio data provided and native TTS unavailable, waiting for server to generate TTS...');
+          return;
+        }
+
+        console.log('🔊 Using server-side TTS (Telugu not available on device)');
+        await playServerAudio(text, audioData, isInitialGreeting);
+      }
+    } catch (error) {
+      console.error('Error playing TTS audio:', error);
+      setIsPlayingTTS(false);
+      // Continue even if TTS fails - user can still read the message
+    }
+  };
+
+  // Play server-side audio using expo-av (fallback method)
+  const playServerAudio = async (text: string, audioData: string, isInitialGreeting: boolean = false) => {
+    try {
       setIsPlayingTTS(true);
 
       // Use the audio data provided by the server
@@ -93,6 +194,9 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
         await soundRef.current.unloadAsync();
         soundRef.current = null;
       }
+
+      // Stop any native TTS that might be playing
+      await stopSpeaking();
 
       // Configure audio mode for playback
       await Audio.setAudioModeAsync({
@@ -126,9 +230,8 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
         }
       });
     } catch (error) {
-      console.error('Error playing TTS audio:', error);
+      console.error('Error playing server audio:', error);
       setIsPlayingTTS(false);
-      // Continue even if TTS fails - user can still read the message
     }
   };
 
@@ -230,6 +333,8 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
 
     try {
       // Stop any playing TTS audio before recording
+      await stopSpeaking(); // Stop native TTS
+      
       if (soundRef.current) {
         await soundRef.current.stopAsync();
         await soundRef.current.unloadAsync();
@@ -258,7 +363,10 @@ export const ActiveCallScreen: React.FC<ActiveCallScreenProps> = ({
         await stopListening().catch(() => { });
       }
 
-      // Stop TTS playback if active
+      // Stop native TTS playback if active
+      await stopSpeaking().catch(() => { });
+
+      // Stop server audio playback if active
       if (soundRef.current) {
         await soundRef.current.unloadAsync().catch(() => { });
         soundRef.current = null;

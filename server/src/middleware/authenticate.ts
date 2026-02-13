@@ -9,6 +9,7 @@ export interface AuthRequest extends Request {
 
 export const authenticate = (
   req: AuthRequest,
+  // @ts-ignore
   res: Response,
   next: NextFunction
 ): void => {

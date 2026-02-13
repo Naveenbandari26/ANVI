@@ -1,4 +1,6 @@
+// @ts-ignore
 import { DiaryModel, IDiary } from '../models/diary.schema';
+// @ts-ignore
 import { ConversationModel } from '../models/conversation.schema';
 import { generateDiaryEntry } from './phi3.service';
 

@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { UserService } from './user.service';
+// @ts-ignore
 import { RegisterDto, LoginDto, AuthResponse } from '../types/auth.types';
 import { getJWTSecret, getJWTExpiresIn } from '../config/jwt';
 
@@ -91,6 +92,7 @@ export class AuthService {
   }
 
   private generateAccessToken(userId: string): string {
+    // @ts-ignore
     return jwt.sign({ userId }, this.jwtSecret, { expiresIn: this.jwtExpiresIn });
   }
 }

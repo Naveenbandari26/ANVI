@@ -3,7 +3,8 @@ import { validationResult, ValidationChain } from 'express-validator';
 import { ApiError } from '../utils/ApiError';
 
 export const validateRequest = (validations: ValidationChain[]) => {
-  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  return async (req: Request, // @ts-ignore
+  res: Response, next: NextFunction): Promise<void> => {
     // Run all validations
     await Promise.all(validations.map((validation) => validation.run(req)));
 

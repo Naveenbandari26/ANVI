@@ -1,6 +1,6 @@
 # Dependencies
 node_modules/
-package-lock.json
+# package-lock.json - Keep this for reproducible builds in Railway
 
 # Environment variables
 .env
@@ -37,5 +37,5 @@ coverage/
 *.tsbuildinfo
 
 # Vosk models (large files)
-models/
+# /models/
 uploads/

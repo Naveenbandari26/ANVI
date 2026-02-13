@@ -1,0 +1,2 @@
+# Railway ignore file - ensure dist is built, not ignored
+# Don't ignore dist folder - it needs to be built during deployment

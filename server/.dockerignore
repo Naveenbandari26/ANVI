@@ -1,0 +1,19 @@
+node_modules
+npm-debug.log
+.env
+.env.local
+.git
+.gitignore
+README.md
+.vscode
+.idea
+*.log
+coverage
+.nyc_output
+*.tsbuildinfo
+.git
+.gitignore
+.DS_Store
+*.md
+# Don't exclude dist - it needs to be built and copied
+# dist/
